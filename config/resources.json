@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Resource to secret mappings - managed by save-secret.ps1, do not edit manually unless you know what you're doing",
+  
+  "resources": {}
+}

@@ -1,0 +1,144 @@
+#!/usr/bin/env pwsh
+<#
+.SYNOPSIS
+    Clear loaded secrets from the current session.
+
+.DESCRIPTION
+    Removes environment variables that were loaded by load-env.ps1.
+    Reads from resources.json to determine which variables to clear.
+
+.PARAMETER Resource
+    Clear only secrets for a specific resource. If not specified, clears all.
+
+.PARAMETER All
+    Clear all secrets from all resources.
+
+.EXAMPLE
+    ./clear-env.ps1
+    Clears all loaded secrets (prompts for confirmation).
+
+.EXAMPLE
+    ./clear-env.ps1 -Resource myapp
+    Clears only secrets from the 'myapp' resource.
+
+.EXAMPLE
+    ./clear-env.ps1 -All -Force
+    Clears all secrets without confirmation prompt.
+#>
+
+param(
+    [string]$Resource,
+    [switch]$All,
+    [switch]$Force
+)
+
+$ErrorActionPreference = "Stop"
+$ScriptRoot = $PSScriptRoot
+$ConfigRoot = Join-Path (Split-Path $ScriptRoot -Parent) "config"
+
+# -----------------------------------------------------------------------------
+# Helper Functions
+# -----------------------------------------------------------------------------
+
+function Get-ResourcesConfig {
+    $resourcesPath = Join-Path $ConfigRoot "resources.json"
+    if (-not (Test-Path $resourcesPath)) {
+        throw "Resources file not found. Run setup.ps1 first."
+    }
+    return Get-Content $resourcesPath -Raw | ConvertFrom-Json
+}
+
+# -----------------------------------------------------------------------------
+# Main Logic
+# -----------------------------------------------------------------------------
+
+Write-Host "`n[CLEAR] Clear Environment Variables" -ForegroundColor Magenta
+
+# Load configuration
+$resourcesConfig = Get-ResourcesConfig
+
+# Determine which resources to clear
+$resourceNames = $resourcesConfig.resources.PSObject.Properties.Name
+
+if ($resourceNames.Count -eq 0) {
+    Write-Host "`n  No resources configured." -ForegroundColor Yellow
+    exit 0
+}
+
+# Filter by resource if specified
+if (-not [string]::IsNullOrWhiteSpace($Resource)) {
+    if ($Resource -notin $resourceNames) {
+        Write-Host "`n  Resource '$Resource' not found." -ForegroundColor Red
+        Write-Host "  Available: $($resourceNames -join ', ')`n" -ForegroundColor DarkGray
+        exit 1
+    }
+    $resourceNames = @($Resource)
+}
+
+# Collect all env vars to clear
+$envVarsToClear = @()
+foreach ($resName in $resourceNames) {
+    $resourceData = $resourcesConfig.resources.$resName
+    foreach ($prop in $resourceData.secrets.PSObject.Properties) {
+        $envVarName = $prop.Value
+        if ($envVarName -notin $envVarsToClear) {
+            $envVarsToClear += $envVarName
+        }
+    }
+}
+
+if ($envVarsToClear.Count -eq 0) {
+    Write-Host "`n  No environment variables to clear." -ForegroundColor Yellow
+    exit 0
+}
+
+# Check which are actually set
+$setVars = @()
+$notSetVars = @()
+foreach ($var in $envVarsToClear) {
+    $value = [Environment]::GetEnvironmentVariable($var, "Process")
+    if ($null -ne $value) {
+        $setVars += $var
+    } else {
+        $notSetVars += $var
+    }
+}
+
+if ($setVars.Count -eq 0) {
+    Write-Host "`n  No secrets currently loaded in this session." -ForegroundColor Yellow
+    Write-Host "  ($($envVarsToClear.Count) configured env vars are not set)`n" -ForegroundColor DarkGray
+    exit 0
+}
+
+# Show what will be cleared
+Write-Host "`nEnvironment variables to clear:" -ForegroundColor Yellow
+foreach ($var in $setVars) {
+    Write-Host "  * $var" -ForegroundColor White
+}
+
+if ($notSetVars.Count -gt 0) {
+    Write-Host "`nNot currently set (skipping):" -ForegroundColor DarkGray
+    foreach ($var in $notSetVars) {
+        Write-Host "  * $var" -ForegroundColor DarkGray
+    }
+}
+
+# Confirm unless -Force
+if (-not $Force) {
+    Write-Host ""
+    $confirm = Read-Host "Clear $($setVars.Count) variable(s)? [y/N]"
+    if ($confirm -notmatch '^[yY]') {
+        Write-Host "`nCancelled.`n" -ForegroundColor Yellow
+        exit 0
+    }
+}
+
+# Clear the variables
+$cleared = 0
+foreach ($var in $setVars) {
+    [Environment]::SetEnvironmentVariable($var, $null, "Process")
+    $cleared++
+    Write-Host "  [OK] Cleared `$env:$var" -ForegroundColor Green
+}
+
+Write-Host "`n[SUCCESS] Cleared $cleared environment variable(s) from current session.`n" -ForegroundColor Green

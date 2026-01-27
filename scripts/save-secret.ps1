@@ -1,0 +1,235 @@
+#!/usr/bin/env pwsh
+<#
+.SYNOPSIS
+    Save a secret to Azure KeyVault.
+
+.DESCRIPTION
+    Adds or updates a secret in KeyVault with the naming convention:
+    {resource}-{name}. Also updates the local resources.json config
+    to track the secret-to-environment-variable mapping.
+
+.PARAMETER Resource
+    The resource group name (e.g., "myapp", "database", "shared")
+
+.PARAMETER Name
+    The secret name within the resource (e.g., "api-key", "connection-string")
+
+.PARAMETER Value
+    Optional: The secret value. If not provided, prompts interactively (recommended).
+
+.PARAMETER EnvVarName
+    Optional: Custom environment variable name. If not provided, auto-generates
+    from resource and name (e.g., "myapp" + "api-key" -> "MYAPP_API_KEY")
+
+.EXAMPLE
+    ./save-secret.ps1 -Resource myapp -Name api-key
+    Prompts for the value interactively (secure, not in shell history).
+
+.EXAMPLE
+    ./save-secret.ps1 -Resource myapp -Name api-key -Value "secret123"
+    Sets value directly (less secure, appears in shell history).
+
+.EXAMPLE
+    ./save-secret.ps1 -Resource myapp -Name api-key -EnvVarName "MY_CUSTOM_VAR"
+    Uses a custom environment variable name instead of auto-generated one.
+#>
+
+param(
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[a-zA-Z][a-zA-Z0-9-]*$')]
+    [string]$Resource,
+    
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[a-zA-Z][a-zA-Z0-9-]*$')]
+    [string]$Name,
+    
+    [string]$Value,
+    
+    [string]$EnvVarName
+)
+
+$ErrorActionPreference = "Stop"
+$ScriptRoot = $PSScriptRoot
+$ConfigRoot = Join-Path (Split-Path $ScriptRoot -Parent) "config"
+
+# -----------------------------------------------------------------------------
+# Helper Functions
+# -----------------------------------------------------------------------------
+
+function Write-Step {
+    param([string]$Message)
+    Write-Host "`n>> $Message" -ForegroundColor Cyan
+}
+
+function Write-Success {
+    param([string]$Message)
+    Write-Host "  [OK] $Message" -ForegroundColor Green
+}
+
+function Write-Info {
+    param([string]$Message)
+    Write-Host "  [i] $Message" -ForegroundColor DarkGray
+}
+
+function Get-Settings {
+    $settingsPath = Join-Path $ConfigRoot "settings.json"
+    if (-not (Test-Path $settingsPath)) {
+        throw "Settings file not found. Run setup.ps1 first."
+    }
+    return Get-Content $settingsPath -Raw | ConvertFrom-Json
+}
+
+function Get-ResourcesConfig {
+    $resourcesPath = Join-Path $ConfigRoot "resources.json"
+    if (-not (Test-Path $resourcesPath)) {
+        throw "Resources file not found. Run setup.ps1 first."
+    }
+    return Get-Content $resourcesPath -Raw | ConvertFrom-Json
+}
+
+function Save-ResourcesConfig {
+    param($Config)
+    $resourcesPath = Join-Path $ConfigRoot "resources.json"
+    $Config | ConvertTo-Json -Depth 10 | Set-Content $resourcesPath -Encoding UTF8
+}
+
+function Test-AzureLogin {
+    $account = az account show 2>$null | ConvertFrom-Json
+    if (-not $account) {
+        Write-Info "Not logged in. Running 'az login'..."
+        az login | Out-Null
+        $account = az account show | ConvertFrom-Json
+    }
+    return $account
+}
+
+function ConvertTo-EnvVarName {
+    param([string]$Resource, [string]$Name)
+    # Convert "myapp" + "api-key" -> "MYAPP_API_KEY"
+    $combined = "$Resource`_$Name"
+    return $combined.ToUpper() -replace '-', '_'
+}
+
+function Read-SecureValue {
+    param([string]$Prompt)
+    
+    Write-Host "$Prompt" -ForegroundColor Yellow -NoNewline
+    
+    # Cross-platform secure input
+    if ($PSVersionTable.Platform -eq 'Unix') {
+        # macOS/Linux: Use stty to hide input
+        $value = ""
+        try {
+            # Disable echo
+            stty -echo 2>$null
+            $value = Read-Host
+        } finally {
+            # Re-enable echo
+            stty echo 2>$null
+            Write-Host ""  # New line after hidden input
+        }
+        return $value
+    } else {
+        # Windows: Use SecureString
+        $secure = Read-Host -AsSecureString
+        $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+        try {
+            return [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+        } finally {
+            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        }
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Main Logic
+# -----------------------------------------------------------------------------
+
+Write-Host "`n[KEY] Save Secret to KeyVault" -ForegroundColor Magenta
+
+# Check Azure login
+Write-Step "Verifying Azure authentication..."
+$account = Test-AzureLogin
+Write-Success "Logged in as: $($account.user.name)"
+
+# Load configuration
+$settings = Get-Settings
+$resourcesConfig = Get-ResourcesConfig
+
+# Build the full secret name
+$secretName = "$Resource-$Name"
+Write-Info "Secret name in vault: $secretName"
+
+# Generate or validate environment variable name
+if ([string]::IsNullOrWhiteSpace($EnvVarName)) {
+    $EnvVarName = ConvertTo-EnvVarName -Resource $Resource -Name $Name
+}
+Write-Info "Environment variable: $EnvVarName"
+
+# Get the secret value
+if ([string]::IsNullOrWhiteSpace($Value)) {
+    Write-Host ""
+    $Value = Read-SecureValue -Prompt "Enter value for '$secretName': "
+    
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        Write-Host "`n[ERROR] No value provided. Aborting." -ForegroundColor Red
+        exit 1
+    }
+}
+
+# Save to KeyVault
+Write-Step "Saving secret to KeyVault '$($settings.vaultName)'..."
+
+try {
+    az keyvault secret set `
+        --vault-name $settings.vaultName `
+        --name $secretName `
+        --value $Value | Out-Null
+    
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to save secret to KeyVault"
+    }
+    
+    Write-Success "Secret saved to KeyVault"
+} catch {
+    Write-Host "`n[ERROR] Failed to save secret: $_" -ForegroundColor Red
+    Write-Host "   Make sure the vault exists and you have permissions." -ForegroundColor DarkGray
+    Write-Host "   Run ./setup.ps1 to verify." -ForegroundColor DarkGray
+    exit 1
+}
+
+# Update local config
+Write-Step "Updating local configuration..."
+
+# Ensure resource exists in config
+if (-not $resourcesConfig.resources.$Resource) {
+    $resourcesConfig.resources | Add-Member -NotePropertyName $Resource -NotePropertyValue @{
+        description = ""
+        secrets = @{}
+    } -Force
+}
+
+# Ensure secrets object exists
+if (-not $resourcesConfig.resources.$Resource.secrets) {
+    $resourcesConfig.resources.$Resource | Add-Member -NotePropertyName "secrets" -NotePropertyValue @{} -Force
+}
+
+# Add/update the secret mapping
+$resourcesConfig.resources.$Resource.secrets | Add-Member -NotePropertyName $secretName -NotePropertyValue $EnvVarName -Force
+
+Save-ResourcesConfig -Config $resourcesConfig
+Write-Success "Updated resources.json"
+
+# Summary
+Write-Host "`n+==============================================================+" -ForegroundColor Green
+Write-Host "|                    Secret Saved!                             |" -ForegroundColor Green
+Write-Host "+==============================================================+" -ForegroundColor Green
+
+Write-Host "`nDetails:" -ForegroundColor Yellow
+Write-Host "  Resource:      $Resource" -ForegroundColor White
+Write-Host "  Secret name:   $secretName" -ForegroundColor White
+Write-Host "  Env variable:  $EnvVarName" -ForegroundColor White
+
+Write-Host "`nTo load this secret:" -ForegroundColor Yellow
+Write-Host "  ./scripts/load-env.ps1 -Resource $Resource" -ForegroundColor White
+Write-Host ""
