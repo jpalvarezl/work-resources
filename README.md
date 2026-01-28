@@ -48,19 +48,26 @@ You need an Azure subscription. [Create a free account](https://azure.microsoft.
 
 ### 1. Configure Your Vault
 
-Edit `config/settings.json` with your desired vault name:
+Copy the environment template and fill in your values:
 
-```json
-{
-  "vaultName": "my-test-secrets-vault",
-  "resourceGroupName": "test-secrets-rg",
-  "subscriptionId": ""
-}
+```bash
+cp .env.template .env
 ```
 
-- `vaultName`: Globally unique name (3-24 chars, alphanumeric and hyphens)
-- `resourceGroupName`: Resource group to create/use
-- `subscriptionId`: Leave empty for default subscription
+Edit `.env` with your desired vault name:
+
+```bash
+# Azure KeyVault Configuration
+VAULT_NAME=my-test-secrets-vault
+RESOURCE_GROUP_NAME=test-secrets-rg
+SUBSCRIPTION_ID=your-subscription-id  # Optional, uses default if empty
+```
+
+- `VAULT_NAME`: Globally unique name (3-24 chars, alphanumeric and hyphens)
+- `RESOURCE_GROUP_NAME`: Resource group to create/use
+- `SUBSCRIPTION_ID`: Leave empty for default subscription
+
+> **Note:** The `.env` file is gitignored and should never be committed.
 
 ### 2. Run Setup
 
@@ -87,15 +94,28 @@ This will:
 
 ### 4. Load Secrets
 
+**For fish shell:**
+```fish
+eval (pwsh ./scripts/load-env.ps1 -Resource myapi -Export fish)
+```
+
+**For bash/zsh:**
+```bash
+eval "$(pwsh ./scripts/load-env.ps1 -Resource myapi -Export bash)"
+```
+
+**For PowerShell:**
 ```powershell
-# Load one resource
 ./scripts/load-env.ps1 -Resource myapi
+```
 
-# Load multiple resources (accumulates)
-./scripts/load-env.ps1 -Resource "myapi,database"
+**Load multiple resources:**
+```fish
+# fish
+eval (pwsh ./scripts/load-env.ps1 -Resource "myapi,database" -Export fish)
 
-# Load all resources
-./scripts/load-env.ps1 -Resource all
+# bash/zsh
+eval "$(pwsh ./scripts/load-env.ps1 -Resource all -Export bash)"
 ```
 
 ### 5. Use in Your Tests
@@ -197,10 +217,12 @@ Remove loaded secrets from current session.
 work_resources/
 ├── README.md                 # This file
 ├── .gitignore
+├── .env.template             # Configuration template (copy to .env)
+├── .env                      # Your local configuration (gitignored)
 ├── config/
-│   ├── settings.json         # Vault configuration
 │   └── resources.json        # Secret → env var mappings (auto-managed)
 └── scripts/
+    ├── common.ps1            # Shared helper functions
     ├── setup.ps1             # Initial setup & vault creation
     ├── load-env.ps1          # Load secrets as env vars
     ├── save-secret.ps1       # Add/update secrets
@@ -255,7 +277,7 @@ Install Azure CLI for your platform (see Prerequisites).
 ### Secrets not loading
 1. Check `./scripts/list-secrets.ps1 -Verify` to see if secrets exist in vault
 2. Ensure you're logged in: `az account show`
-3. Verify vault name in `config/settings.json`
+3. Verify vault name in `.env`
 
 ## License
 

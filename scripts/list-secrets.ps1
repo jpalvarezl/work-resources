@@ -33,18 +33,18 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
-$ConfigRoot = Join-Path (Split-Path $ScriptRoot -Parent) "config"
+$ProjectRoot = Split-Path $ScriptRoot -Parent
+$ConfigRoot = Join-Path $ProjectRoot "config"
+
+# Load shared helpers
+. (Join-Path $ScriptRoot "common.ps1")
 
 # -----------------------------------------------------------------------------
 # Helper Functions
 # -----------------------------------------------------------------------------
 
 function Get-Settings {
-    $settingsPath = Join-Path $ConfigRoot "settings.json"
-    if (-not (Test-Path $settingsPath)) {
-        throw "Settings file not found. Run setup.ps1 first."
-    }
-    return Get-Content $settingsPath -Raw | ConvertFrom-Json
+    return Get-EnvSettings -ProjectRoot $ProjectRoot
 }
 
 function Get-ResourcesConfig {

@@ -50,7 +50,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
-$ConfigRoot = Join-Path (Split-Path $ScriptRoot -Parent) "config"
+$ProjectRoot = Split-Path $ScriptRoot -Parent
+$ConfigRoot = Join-Path $ProjectRoot "config"
+
+# Load shared helpers
+. (Join-Path $ScriptRoot "common.ps1")
 
 # -----------------------------------------------------------------------------
 # Helper Functions
@@ -72,11 +76,7 @@ function Write-Info {
 }
 
 function Get-Settings {
-    $settingsPath = Join-Path $ConfigRoot "settings.json"
-    if (-not (Test-Path $settingsPath)) {
-        throw "Settings file not found. Run setup.ps1 first."
-    }
-    return Get-Content $settingsPath -Raw | ConvertFrom-Json
+    return Get-EnvSettings -ProjectRoot $ProjectRoot
 }
 
 function Get-ResourcesConfig {
@@ -202,16 +202,16 @@ try {
 Write-Step "Updating local configuration..."
 
 # Ensure resource exists in config
-if (-not $resourcesConfig.resources.$Resource) {
-    $resourcesConfig.resources | Add-Member -NotePropertyName $Resource -NotePropertyValue @{
+if (-not $resourcesConfig.resources.PSObject.Properties[$Resource]) {
+    $resourcesConfig.resources | Add-Member -NotePropertyName $Resource -NotePropertyValue ([PSCustomObject]@{
         description = ""
-        secrets = @{}
-    } -Force
+        secrets = [PSCustomObject]@{}
+    }) -Force
 }
 
 # Ensure secrets object exists
-if (-not $resourcesConfig.resources.$Resource.secrets) {
-    $resourcesConfig.resources.$Resource | Add-Member -NotePropertyName "secrets" -NotePropertyValue @{} -Force
+if (-not $resourcesConfig.resources.$Resource.PSObject.Properties["secrets"]) {
+    $resourcesConfig.resources.$Resource | Add-Member -NotePropertyName "secrets" -NotePropertyValue ([PSCustomObject]@{}) -Force
 }
 
 # Add/update the secret mapping
