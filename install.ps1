@@ -197,29 +197,18 @@ function Install-Files {
         }
     }
     
-    # Handle resources.json - migrate from source if exists and destination is empty/missing
+    # Handle resources.json - create empty if not exists (will be populated by wr-setup)
     $destResourcesJson = Join-Path $ConfigDir "resources.json"
-    $sourceResourcesJson = Join-Path $SourceRoot "config/resources.json"
     
     if (-not (Test-Path $destResourcesJson)) {
-        # Destination doesn't exist - check if source has one to migrate
-        if ((Test-Path $sourceResourcesJson)) {
-            $sourceContent = Get-Content $sourceResourcesJson -Raw | ConvertFrom-Json
-            if ($sourceContent.resources.PSObject.Properties.Count -gt 0) {
-                Copy-Item $sourceResourcesJson $destResourcesJson -Force
-                Write-Success "Migrated resources.json from source ($($sourceContent.resources.PSObject.Properties.Count) resource(s))"
-            } else {
-                # Source is empty, create fresh
-                $initialConfig = @{ resources = @{} } | ConvertTo-Json -Depth 10
-                Set-Content $destResourcesJson -Value $initialConfig -Encoding UTF8
-                Write-Success "Created empty resources.json"
-            }
-        } else {
-            # No source, create fresh
-            $initialConfig = @{ resources = @{} } | ConvertTo-Json -Depth 10
-            Set-Content $destResourcesJson -Value $initialConfig -Encoding UTF8
-            Write-Success "Created empty resources.json"
-        }
+        # Create empty resources.json - user will run wr-setup to sync from KeyVault
+        $initialConfig = @{
+            "`$schema" = "https://json-schema.org/draft/2020-12/schema"
+            "`$comment" = "Auto-generated from KeyVault. Run wr-setup to sync secrets."
+            resources = @{}
+        } | ConvertTo-Json -Depth 10
+        Set-Content $destResourcesJson -Value $initialConfig -Encoding UTF8
+        Write-Success "Created empty resources.json (run wr-setup to sync from KeyVault)"
     } else {
         Write-Info "Kept existing resources.json"
     }
@@ -336,13 +325,14 @@ function Get-ZshConfig {
 }
 
 function Get-FishConfig {
-    $localBin = Join-Path $HOME ".local/bin"
+    # Note: We don't add ~/.local/bin to PATH for fish because the functions below
+    # handle wr-load and wr-clear (which need to run in-process to set env vars).
+    # Other commands (wr-save, wr-list, etc.) are wrapped as functions too for consistency.
     
     return @"
 $MarkerStart
 # Azure KeyVault Secrets Manager
 set -gx WORK_RESOURCES_ROOT "$InstallRoot"
-fish_add_path "$localBin"
 
 # wr-load must be a function to set env vars in current shell
 function wr-load
@@ -352,6 +342,23 @@ end
 # wr-clear must be a function to unset env vars in current shell
 function wr-clear
     eval (pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/clear-env.ps1" -Export fish `$argv)
+end
+
+# Other commands can run directly
+function wr-save
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/save-secret.ps1" `$argv
+end
+
+function wr-delete
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/delete-secret.ps1" `$argv
+end
+
+function wr-list
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/list-secrets.ps1" `$argv
+end
+
+function wr-setup
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/setup.ps1" `$argv
 end
 $MarkerEnd
 "@
@@ -508,7 +515,7 @@ if (-not $Uninstall) {
     
     Write-Host "`nNext steps:" -ForegroundColor Yellow
     Write-Host "  1. Restart your shell (or source your profile)"
-    Write-Host "  2. Create your .env file (see .env.template): $ConfigDir/.env"
+    Write-Host "  2. Verify and update your .env file (see .env.template): $ConfigDir/.env"
     Write-Host "  3. Run: wr-setup"
 }
 

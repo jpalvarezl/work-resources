@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Wrapper for load-env.ps1
 #
-# Usage:
-#   bash/zsh: eval "$(wr-load -Resource myapi -Export bash)"
-#   fish:     eval (wr-load -Resource myapi -Export fish)
+# Automatically detects your shell and loads secrets into environment variables.
+# No need to wrap with eval - this script handles it.
 
 # macOS-compatible way to resolve the real script path (handles symlinks)
 get_real_path() {
@@ -19,4 +18,59 @@ get_real_path() {
 REAL_SCRIPT="$(get_real_path "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$REAL_SCRIPT")"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-pwsh -NoProfile -ExecutionPolicy Bypass -File "$PROJECT_ROOT/scripts/load-env.ps1" "$@"
+
+# Detect current shell
+detect_shell() {
+    # Check parent process name
+    local parent_shell=""
+    if [[ -n "$FISH_VERSION" ]]; then
+        echo "fish"
+        return
+    elif [[ -n "$ZSH_VERSION" ]]; then
+        echo "zsh"
+        return
+    elif [[ -n "$BASH_VERSION" ]]; then
+        echo "bash"
+        return
+    fi
+    
+    # Fallback: check $SHELL
+    case "$SHELL" in
+        */fish) echo "fish" ;;
+        */zsh)  echo "zsh" ;;
+        */bash) echo "bash" ;;
+        *)      echo "bash" ;;  # Default to bash
+    esac
+}
+
+# Check if -Export is already specified
+has_export_flag() {
+    for arg in "$@"; do
+        if [[ "$arg" == "-Export" || "$arg" == "--Export" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+CURRENT_SHELL=$(detect_shell)
+
+# If user specified -Export, just run pwsh directly (they want raw output)
+if has_export_flag "$@"; then
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "$PROJECT_ROOT/scripts/load-env.ps1" "$@"
+    exit $?
+fi
+
+# Get export commands from pwsh
+export_commands=$(pwsh -NoProfile -ExecutionPolicy Bypass -File "$PROJECT_ROOT/scripts/load-env.ps1" "$@" -Export "$CURRENT_SHELL" 2>&1)
+exit_code=$?
+
+if [[ $exit_code -ne 0 ]]; then
+    # If there was an error, show the output (which contains error messages)
+    echo "$export_commands"
+    exit $exit_code
+fi
+
+# Output the commands for the shell to eval
+# The trick: this script is sourced or eval'd by a shell function
+echo "$export_commands"

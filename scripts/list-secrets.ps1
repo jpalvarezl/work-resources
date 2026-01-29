@@ -103,7 +103,7 @@ $resourceNames = $resourcesConfig.resources.PSObject.Properties.Name
 
 if ($resourceNames.Count -eq 0) {
     Write-Host "`n  No resources configured yet." -ForegroundColor Yellow
-    Write-Host "  Add secrets using: ./save-secret.ps1 -Resource <name> -Name <secret-name>`n" -ForegroundColor DarkGray
+    Write-Host "  Add secrets using: wr-save -Resource <name> -Name <secret-name>`n" -ForegroundColor DarkGray
     exit 0
 }
 

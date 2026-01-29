@@ -105,24 +105,35 @@ $ConfigRoot = Join-Path $ProjectRoot "config"
 # Helper Functions
 # -----------------------------------------------------------------------------
 
+# Write to stderr so messages don't interfere with export commands sent to stdout
+function Write-Stderr {
+    param([string]$Message)
+    [Console]::Error.WriteLine($Message)
+}
+
 function Write-Step {
     param([string]$Message)
-    Write-Host "`n>> $Message" -ForegroundColor Cyan
+    Write-Stderr "`n>> $Message"
 }
 
 function Write-Success {
     param([string]$Message)
-    Write-Host "  [OK] $Message" -ForegroundColor Green
+    Write-Stderr "  [OK] $Message"
 }
 
 function Write-Info {
     param([string]$Message)
-    Write-Host "  [i] $Message" -ForegroundColor DarkGray
+    Write-Stderr "  [i] $Message"
 }
 
 function Write-Warn {
     param([string]$Message)
-    Write-Host "  [!] $Message" -ForegroundColor Yellow
+    Write-Stderr "  [!] $Message"
+}
+
+function Write-Err {
+    param([string]$Message)
+    Write-Stderr "  [X] $Message"
 }
 
 function Get-Settings {
@@ -151,21 +162,14 @@ function Test-AzureLogin {
 # Main Logic
 # -----------------------------------------------------------------------------
 
-# Quiet mode when exporting - only output the export commands
-$Quiet = $Export -ne ""
+Write-Stderr "`n[KEY] Loading KeyVault Secrets"
 
-if (-not $Quiet) {
-    Write-Host "`n[KEY] Loading KeyVault Secrets" -ForegroundColor Magenta
-
-    # Check Azure login
-    Write-Step "Verifying Azure authentication..."
-}
+# Check Azure login
+Write-Step "Verifying Azure authentication..."
 
 $account = Test-AzureLogin
 
-if (-not $Quiet) {
-    Write-Success "Logged in as: $($account.user.name)"
-}
+Write-Success "Logged in as: $($account.user.name)"
 
 # Load configuration
 $settings = Get-Settings
@@ -179,19 +183,15 @@ $resourceList = if ($Resource -eq "all") {
 }
 
 if ($resourceList.Count -eq 0) {
-    if (-not $Quiet) {
-        Write-Warn "No resources found in configuration."
-        Write-Host "  Add secrets using: ./save-secret.ps1 -Resource <name> -Name <secret-name>`n" -ForegroundColor DarkGray
-    }
+    Write-Warn "No resources found in configuration."
+    Write-Stderr "  Add secrets using: wr-save -Resource <name> -Name <secret-name>"
     exit 0
 }
 
-if (-not $Quiet) {
-    Write-Step "Loading secrets from vault: $($settings.vaultName)"
-    Write-Info "Resources: $($resourceList -join ', ')"
-    if ($resourceList.Count -gt 1) {
-        Write-Warn "Previously loaded resources with colliding environment variable names will overwritten."
-    }
+Write-Step "Loading secrets from vault: $($settings.vaultName)"
+Write-Info "Resources: $($resourceList -join ', ')"
+if ($resourceList.Count -gt 1) {
+    Write-Warn "Previously loaded resources with colliding environment variable names will overwritten."
 }
 
 # Collect all secrets to load
@@ -212,21 +212,17 @@ foreach ($res in $resourceList) {
     }
 }
 
-if ($missingResources.Count -gt 0 -and -not $Quiet) {
+if ($missingResources.Count -gt 0) {
     Write-Warn "Resources not found in config: $($missingResources -join ', ')"
 }
 
 if ($secretsToLoad.Count -eq 0) {
-    if (-not $Quiet) {
-        Write-Warn "No secrets found for specified resources."
-    }
+    Write-Warn "No secrets found for specified resources."
     exit 0
 }
 
 # Fetch secrets from KeyVault
-if (-not $Quiet) {
-    Write-Step "Fetching $($secretsToLoad.Count) secret(s) from KeyVault..."
-}
+Write-Step "Fetching $($secretsToLoad.Count) secret(s) from KeyVault..."
 
 $loadedSecrets = @{}
 $failedSecrets = @()
@@ -238,10 +234,8 @@ foreach ($entry in $secretsToLoad.GetEnumerator()) {
     $secretName = $entry.Key
     $envVarName = $entry.Value
     
-    if (-not $Quiet) {
-        $percentComplete = [math]::Round(($current / $total) * 100)
-        Write-Progress -Activity "Loading secrets" -Status "$secretName" -PercentComplete $percentComplete
-    }
+    $percentComplete = [math]::Round(($current / $total) * 100)
+    Write-Progress -Activity "Loading secrets" -Status "$secretName" -PercentComplete $percentComplete
     
     try {
         $value = az keyvault secret show `
@@ -251,41 +245,32 @@ foreach ($entry in $secretsToLoad.GetEnumerator()) {
         
         if ($LASTEXITCODE -eq 0 -and $value) {
             $loadedSecrets[$envVarName] = $value
-            if (-not $Quiet) {
-                Write-Host "  [OK] " -ForegroundColor Green -NoNewline
-                Write-Host "$secretName -> " -ForegroundColor DarkGray -NoNewline
-                Write-Host "`$env:$envVarName" -ForegroundColor White
-            }
+            Write-Stderr "  [OK] $secretName -> `$env:$envVarName"
         } else {
             $failedSecrets += $secretName
-            if (-not $Quiet) {
-                Write-Host "  [X] " -ForegroundColor Red -NoNewline
-                Write-Host "$secretName (not found in vault)" -ForegroundColor DarkGray
-            }
+            Write-Err "$secretName (not found in vault)"
         }
     } catch {
         $failedSecrets += $secretName
-        if (-not $Quiet) {
-            Write-Host "  [X] " -ForegroundColor Red -NoNewline
-            Write-Host "$secretName (error: $_)" -ForegroundColor DarkGray
-        }
+        Write-Err "$secretName (error: $_)"
     }
 }
 
-if (-not $Quiet) {
-    Write-Progress -Activity "Loading secrets" -Completed
-}
+Write-Progress -Activity "Loading secrets" -Completed
 
 if ($loadedSecrets.Count -eq 0) {
-    if (-not $Export) {
-        Write-Host "`n[ERROR] No secrets were loaded." -ForegroundColor Red
-    }
+    Write-Stderr "`n[ERROR] No secrets were loaded."
     exit 1
 }
 
 # Output or set environment variables based on mode
 if ($Export) {
     # Output shell-compatible export commands
+    Write-Stderr "`n[SUCCESS] Loaded $($loadedSecrets.Count) secret(s)"
+    if ($failedSecrets.Count -gt 0) {
+        Write-Warn "$($failedSecrets.Count) secret(s) failed to load"
+    }
+    
     foreach ($entry in $loadedSecrets.GetEnumerator()) {
         $name = $entry.Key
         # Escape special characters in value

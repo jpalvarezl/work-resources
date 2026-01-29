@@ -248,5 +248,5 @@ Write-Host "  Secret name:   $secretName" -ForegroundColor White
 Write-Host "  Env variable:  $EnvVarName" -ForegroundColor White
 
 Write-Host "`nTo load this secret:" -ForegroundColor Yellow
-Write-Host "  ./scripts/load-env.ps1 -Resource $Resource" -ForegroundColor White
+Write-Host "  wr-load -Resource $Resource" -ForegroundColor White
 Write-Host ""
