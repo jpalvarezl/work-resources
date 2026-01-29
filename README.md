@@ -211,6 +211,29 @@ Remove loaded secrets from current session.
 ./scripts/clear-env.ps1 -Force             # Skip confirmation
 ```
 
+### `delete-secret.ps1`
+
+Delete secrets from KeyVault and local configuration.
+
+```powershell
+./scripts/delete-secret.ps1 -Resource <name> -Name <secret-name> [-Force]
+./scripts/delete-secret.ps1 -Resource <name> -All [-Force]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-Resource` | Yes | Resource group name |
+| `-Name` | No* | Secret name to delete (*required unless -All is used) |
+| `-All` | No | Delete all secrets for the resource |
+| `-Force` | No | Skip confirmation prompt |
+
+**Examples**:
+```powershell
+./scripts/delete-secret.ps1 -Resource myapi -Name api-key    # Delete single secret
+./scripts/delete-secret.ps1 -Resource myapi -All             # Delete entire resource
+./scripts/delete-secret.ps1 -Resource myapi -All -Force      # No confirmation
+```
+
 ## Project Structure
 
 ```
