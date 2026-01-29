@@ -13,6 +13,12 @@
 .PARAMETER All
     Clear all secrets from all resources.
 
+.PARAMETER Export
+    Output shell-compatible unset commands instead of clearing vars in PowerShell.
+    Supported values: fish, bash, zsh, powershell
+    
+    Usage for bash:   eval "$(pwsh ./scripts/clear-env.ps1 -Export bash -Force)"
+
 .EXAMPLE
     ./clear-env.ps1
     Clears all loaded secrets (prompts for confirmation).
@@ -29,12 +35,20 @@
 param(
     [string]$Resource,
     [switch]$All,
-    [switch]$Force
+    [switch]$Force,
+    [ValidateSet("fish", "bash", "zsh", "powershell", "")]
+    [string]$Export = ""
 )
 
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
-$ConfigRoot = Join-Path (Split-Path $ScriptRoot -Parent) "config"
+
+# Load shared helpers
+. (Join-Path $ScriptRoot "common.ps1")
+
+# Resolve paths (supports WORK_RESOURCES_ROOT env var)
+$ProjectRoot = Get-ProjectRoot -ScriptRoot $ScriptRoot
+$ConfigRoot = Join-Path $ProjectRoot "config"
 
 # -----------------------------------------------------------------------------
 # Helper Functions
@@ -52,7 +66,12 @@ function Get-ResourcesConfig {
 # Main Logic
 # -----------------------------------------------------------------------------
 
-Write-Host "`n[CLEAR] Clear Environment Variables" -ForegroundColor Magenta
+# In Export mode, suppress all interactive output
+$SilentMode = -not [string]::IsNullOrEmpty($Export)
+
+if (-not $SilentMode) {
+    Write-Host "`n[CLEAR] Clear Environment Variables" -ForegroundColor Magenta
+}
 
 # Load configuration
 $resourcesConfig = Get-ResourcesConfig
@@ -61,15 +80,19 @@ $resourcesConfig = Get-ResourcesConfig
 $resourceNames = $resourcesConfig.resources.PSObject.Properties.Name
 
 if ($resourceNames.Count -eq 0) {
-    Write-Host "`n  No resources configured." -ForegroundColor Yellow
+    if (-not $SilentMode) {
+        Write-Host "`n  No resources configured." -ForegroundColor Yellow
+    }
     exit 0
 }
 
 # Filter by resource if specified
 if (-not [string]::IsNullOrWhiteSpace($Resource)) {
     if ($Resource -notin $resourceNames) {
-        Write-Host "`n  Resource '$Resource' not found." -ForegroundColor Red
-        Write-Host "  Available: $($resourceNames -join ', ')`n" -ForegroundColor DarkGray
+        if (-not $SilentMode) {
+            Write-Host "`n  Resource '$Resource' not found." -ForegroundColor Red
+            Write-Host "  Available: $($resourceNames -join ', ')`n" -ForegroundColor DarkGray
+        }
         exit 1
     }
     $resourceNames = @($Resource)
@@ -88,7 +111,9 @@ foreach ($resName in $resourceNames) {
 }
 
 if ($envVarsToClear.Count -eq 0) {
-    Write-Host "`n  No environment variables to clear." -ForegroundColor Yellow
+    if (-not $SilentMode) {
+        Write-Host "`n  No environment variables to clear." -ForegroundColor Yellow
+    }
     exit 0
 }
 
@@ -105,26 +130,30 @@ foreach ($var in $envVarsToClear) {
 }
 
 if ($setVars.Count -eq 0) {
-    Write-Host "`n  No secrets currently loaded in this session." -ForegroundColor Yellow
-    Write-Host "  ($($envVarsToClear.Count) configured env vars are not set)`n" -ForegroundColor DarkGray
+    if (-not $SilentMode) {
+        Write-Host "`n  No secrets currently loaded in this session." -ForegroundColor Yellow
+        Write-Host "  ($($envVarsToClear.Count) configured env vars are not set)`n" -ForegroundColor DarkGray
+    }
     exit 0
 }
 
-# Show what will be cleared
-Write-Host "`nEnvironment variables to clear:" -ForegroundColor Yellow
-foreach ($var in $setVars) {
-    Write-Host "  * $var" -ForegroundColor White
-}
+# Show what will be cleared (only in interactive mode)
+if (-not $SilentMode) {
+    Write-Host "`nEnvironment variables to clear:" -ForegroundColor Yellow
+    foreach ($var in $setVars) {
+        Write-Host "  * $var" -ForegroundColor White
+    }
 
-if ($notSetVars.Count -gt 0) {
-    Write-Host "`nNot currently set (skipping):" -ForegroundColor DarkGray
-    foreach ($var in $notSetVars) {
-        Write-Host "  * $var" -ForegroundColor DarkGray
+    if ($notSetVars.Count -gt 0) {
+        Write-Host "`nNot currently set (skipping):" -ForegroundColor DarkGray
+        foreach ($var in $notSetVars) {
+            Write-Host "  * $var" -ForegroundColor DarkGray
+        }
     }
 }
 
-# Confirm unless -Force
-if (-not $Force) {
+# Confirm unless -Force or -Export (non-interactive)
+if (-not $Force -and [string]::IsNullOrEmpty($Export)) {
     Write-Host ""
     $confirm = Read-Host "Clear $($setVars.Count) variable(s)? [y/N]"
     if ($confirm -notmatch '^[yY]') {
@@ -135,10 +164,28 @@ if (-not $Force) {
 
 # Clear the variables
 $cleared = 0
-foreach ($var in $setVars) {
-    [Environment]::SetEnvironmentVariable($var, $null, "Process")
-    $cleared++
-    Write-Host "  [OK] Cleared `$env:$var" -ForegroundColor Green
-}
 
-Write-Host "`n[SUCCESS] Cleared $cleared environment variable(s) from current session.`n" -ForegroundColor Green
+# If Export mode, output shell commands for ALL configured vars (we can't check parent shell)
+if (-not [string]::IsNullOrEmpty($Export)) {
+    foreach ($var in $envVarsToClear) {
+        switch ($Export) {
+            "fish" {
+                Write-Output "set -e $var;"
+            }
+            { $_ -in "bash", "zsh" } {
+                Write-Output "unset $var;"
+            }
+            "powershell" {
+                Write-Output "Remove-Item Env:\$var -ErrorAction SilentlyContinue;"
+            }
+        }
+        $cleared++
+    }
+} else {
+    foreach ($var in $setVars) {
+        [Environment]::SetEnvironmentVariable($var, $null, "Process")
+        $cleared++
+        Write-Host "  [OK] Cleared `$env:$var" -ForegroundColor Green
+    }
+    Write-Host "`n[SUCCESS] Cleared $cleared environment variable(s) from current session.`n" -ForegroundColor Green
+}

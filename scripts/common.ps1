@@ -1,13 +1,53 @@
 # Shared helper functions for KeyVault scripts
 # This file is dot-sourced by other scripts
 
+function Get-ProjectRoot {
+    <#
+    .SYNOPSIS
+        Resolves the project root directory.
+    .DESCRIPTION
+        Checks WORK_RESOURCES_ROOT environment variable first,
+        then falls back to deriving from script location.
+    #>
+    param(
+        [string]$ScriptRoot = $null
+    )
+    
+    # First, check environment variable
+    if ($env:WORK_RESOURCES_ROOT) {
+        $root = $env:WORK_RESOURCES_ROOT
+        if (Test-Path $root) {
+            return $root
+        }
+        Write-Warning "WORK_RESOURCES_ROOT is set to '$root' but path does not exist. Falling back to script location."
+    }
+    
+    # Fall back to script location
+    if ($ScriptRoot) {
+        return Split-Path $ScriptRoot -Parent
+    }
+    
+    throw "Cannot determine project root. Set WORK_RESOURCES_ROOT environment variable or run from scripts directory."
+}
+
 function Get-EnvSettings {
     param(
         [string]$ProjectRoot
     )
     
-    $envPath = Join-Path $ProjectRoot ".env"
-    $templatePath = Join-Path $ProjectRoot ".env.template"
+    # Look for .env in config/ subdirectory first, then project root (for backward compatibility)
+    $configDir = Join-Path $ProjectRoot "config"
+    $envPath = Join-Path $configDir ".env"
+    
+    if (-not (Test-Path $envPath)) {
+        # Fall back to project root for backward compatibility
+        $envPath = Join-Path $ProjectRoot ".env"
+    }
+    
+    $templatePath = Join-Path $configDir ".env.template"
+    if (-not (Test-Path $templatePath)) {
+        $templatePath = Join-Path $ProjectRoot ".env.template"
+    }
     
     if (-not (Test-Path $envPath)) {
         if (Test-Path $templatePath) {

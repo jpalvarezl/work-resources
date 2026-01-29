@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Wrapper for setup.ps1
+
+# macOS-compatible way to resolve the real script path (handles symlinks)
+get_real_path() {
+    local path="$1"
+    while [[ -L "$path" ]]; do
+        local dir="$(cd "$(dirname "$path")" && pwd)"
+        path="$(readlink "$path")"
+        [[ "$path" != /* ]] && path="$dir/$path"
+    done
+    echo "$(cd "$(dirname "$path")" && pwd)/$(basename "$path")"
+}
+
+REAL_SCRIPT="$(get_real_path "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "$REAL_SCRIPT")"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+exec pwsh -NoProfile -ExecutionPolicy Bypass -File "$PROJECT_ROOT/scripts/setup.ps1" "$@"

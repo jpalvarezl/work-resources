@@ -43,7 +43,7 @@
 #>
 
 param(
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     [string]$Resource,
     
     [ValidateSet("fish", "bash", "zsh", "powershell", "")]
@@ -53,12 +53,53 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# Check for required parameter manually to avoid interactive prompt hanging
+if ([string]::IsNullOrWhiteSpace($Resource)) {
+    if ($Export) {
+        # Output shell command that displays an error message
+        switch ($Export) {
+            "fish" { 
+                Write-Output "echo 'Error: -Resource parameter is required. Usage: wr-load -Resource <name>'" 
+            }
+            default { 
+                Write-Output "echo 'Error: -Resource parameter is required. Usage: wr-load -Resource <name>'" 
+            }
+        }
+    } else {
+        Write-Host "Error: -Resource parameter is required." -ForegroundColor Red
+        Write-Host ""
+        Write-Host "Usage: wr-load -Resource <name>" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "Examples:" -ForegroundColor Cyan
+        Write-Host "  wr-load -Resource myapi          # Load secrets for 'myapi'"
+        Write-Host "  wr-load -Resource 'api,db'       # Load multiple resources"
+        Write-Host "  wr-load -Resource all            # Load all resources"
+        Write-Host ""
+        Write-Host "Available resources:" -ForegroundColor Cyan
+        # Use WORK_RESOURCES_ROOT if set, otherwise fall back to script location
+        $projectRoot = if ($env:WORK_RESOURCES_ROOT -and (Test-Path $env:WORK_RESOURCES_ROOT)) {
+            $env:WORK_RESOURCES_ROOT
+        } else {
+            Split-Path $PSScriptRoot -Parent
+        }
+        $configPath = Join-Path (Join-Path $projectRoot "config") "resources.json"
+        if (Test-Path $configPath) {
+            $config = Get-Content $configPath -Raw | ConvertFrom-Json
+            $config.resources.PSObject.Properties.Name | ForEach-Object { Write-Host "  - $_" }
+        }
+    }
+    exit 1
+}
+
 $ScriptRoot = $PSScriptRoot
-$ProjectRoot = Split-Path $ScriptRoot -Parent
-$ConfigRoot = Join-Path $ProjectRoot "config"
 
 # Load shared helpers
 . (Join-Path $ScriptRoot "common.ps1")
+
+# Resolve paths (supports WORK_RESOURCES_ROOT env var)
+$ProjectRoot = Get-ProjectRoot -ScriptRoot $ScriptRoot
+$ConfigRoot = Join-Path $ProjectRoot "config"
 
 # -----------------------------------------------------------------------------
 # Helper Functions

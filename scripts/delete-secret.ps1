@@ -58,11 +58,13 @@ if ($All -and $Name) {
 
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
-$ProjectRoot = Split-Path $ScriptRoot -Parent
-$ConfigRoot = Join-Path $ProjectRoot "config"
 
 # Load shared helpers
 . (Join-Path $ScriptRoot "common.ps1")
+
+# Resolve paths (supports WORK_RESOURCES_ROOT env var)
+$ProjectRoot = Get-ProjectRoot -ScriptRoot $ScriptRoot
+$ConfigRoot = Join-Path $ProjectRoot "config"
 
 # -----------------------------------------------------------------------------
 # Helper Functions

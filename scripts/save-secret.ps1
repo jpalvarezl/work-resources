@@ -53,11 +53,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
-$ProjectRoot = Split-Path $ScriptRoot -Parent
-$ConfigRoot = Join-Path $ProjectRoot "config"
 
 # Load shared helpers
 . (Join-Path $ScriptRoot "common.ps1")
+
+# Resolve paths (supports WORK_RESOURCES_ROOT env var)
+$ProjectRoot = Get-ProjectRoot -ScriptRoot $ScriptRoot
+$ConfigRoot = Join-Path $ProjectRoot "config"
 
 # -----------------------------------------------------------------------------
 # Helper Functions
@@ -167,6 +169,18 @@ Write-Info "Secret name in vault: $secretName"
 if ([string]::IsNullOrWhiteSpace($EnvVarName)) {
     $EnvVarName = ConvertTo-EnvVarName -Resource $Resource -Name $Name
 }
+
+# Validate environment variable name to prevent command injection
+# Only allow alphanumerics and underscores, must start with letter or underscore
+if ($EnvVarName -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+    Write-Host "`n[ERROR] Invalid environment variable name: '$EnvVarName'" -ForegroundColor Red
+    Write-Host "  Environment variable names must:" -ForegroundColor Yellow
+    Write-Host "    - Start with a letter or underscore"
+    Write-Host "    - Contain only letters, numbers, and underscores"
+    Write-Host "`n"
+    exit 1
+}
+
 Write-Info "Environment variable: $EnvVarName"
 
 # Get the secret value
