@@ -350,7 +350,7 @@ Write-Host "|                    Setup Complete!                           |" -F
 Write-Host "+==============================================================+" -ForegroundColor Green
 
 Write-Host "`nNext steps:" -ForegroundColor Yellow
-Write-Host "  1. Add a secret:     ./scripts/save-secret.ps1 -Resource myapp -Name api-key" -ForegroundColor White
-Write-Host "  2. Load secrets:     ./scripts/load-env.ps1 -Resource myapp" -ForegroundColor White
-Write-Host "  3. List secrets:     ./scripts/list-secrets.ps1" -ForegroundColor White
+Write-Host "  1. Add a secret:     wr-save -Resource myapp -Name api-key" -ForegroundColor White
+Write-Host "  2. Load secrets:     wr-load -Resource myapp" -ForegroundColor White
+Write-Host "  3. List secrets:     wr-list" -ForegroundColor White
 Write-Host ""

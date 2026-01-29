@@ -515,7 +515,7 @@ if (-not $Uninstall) {
     
     Write-Host "`nNext steps:" -ForegroundColor Yellow
     Write-Host "  1. Restart your shell (or source your profile)"
-    Write-Host "  2. Create your .env file (see .env.template): $ConfigDir/.env"
+    Write-Host "  2. Verify and update your .env file (see .env.template): $ConfigDir/.env"
     Write-Host "  3. Run: wr-setup"
 }
 
