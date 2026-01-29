@@ -77,7 +77,13 @@ if ([string]::IsNullOrWhiteSpace($Resource)) {
         Write-Host "  wr-load -Resource all            # Load all resources"
         Write-Host ""
         Write-Host "Available resources:" -ForegroundColor Cyan
-        $configPath = Join-Path (Join-Path (Split-Path $PSScriptRoot -Parent) "config") "resources.json"
+        # Use WORK_RESOURCES_ROOT if set, otherwise fall back to script location
+        $projectRoot = if ($env:WORK_RESOURCES_ROOT -and (Test-Path $env:WORK_RESOURCES_ROOT)) {
+            $env:WORK_RESOURCES_ROOT
+        } else {
+            Split-Path $PSScriptRoot -Parent
+        }
+        $configPath = Join-Path (Join-Path $projectRoot "config") "resources.json"
         if (Test-Path $configPath) {
             $config = Get-Content $configPath -Raw | ConvertFrom-Json
             $config.resources.PSObject.Properties.Name | ForEach-Object { Write-Host "  - $_" }
