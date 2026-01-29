@@ -1,6 +1,7 @@
 # Ensure shell scripts have Unix line endings
 bin/wr-* text eol=lf
 install.sh text eol=lf
+uninstall.sh text eol=lf
 
 # Windows batch files keep CRLF
 *.cmd text eol=crlf
