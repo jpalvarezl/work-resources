@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Wrapper for delete-secret.ps1
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REAL_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "$REAL_SCRIPT")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 exec pwsh -NoProfile -ExecutionPolicy Bypass -File "$PROJECT_ROOT/scripts/delete-secret.ps1" "$@"

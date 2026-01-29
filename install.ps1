@@ -189,6 +189,14 @@ function Install-Files {
     }
     Write-Success "Copied $($binFiles.Count) shell wrappers"
     
+    # On Linux/macOS, set execute permissions on bash wrappers
+    if (-not $IsWindowsOS) {
+        $bashWrappers = Get-ChildItem $BinDir -File | Where-Object { $_.Extension -eq "" }
+        foreach ($wrapper in $bashWrappers) {
+            chmod +x $wrapper.FullName
+        }
+    }
+    
     # Handle resources.json - migrate from source if exists and destination is empty/missing
     $destResourcesJson = Join-Path $ConfigDir "resources.json"
     $sourceResourcesJson = Join-Path $SourceRoot "config/resources.json"
@@ -222,7 +230,7 @@ function Install-Files {
         Copy-Item $envTemplate (Join-Path $ConfigDir ".env.template") -Force
     }
     
-    # Handle .env - migrate from source if exists and destination is empty/missing
+    # Handle .env - migrate from source if exists, otherwise exit with error
     $destEnvFile = Join-Path $ConfigDir ".env"
     $sourceEnvFile = Join-Path $SourceRoot ".env"
     
@@ -231,9 +239,23 @@ function Install-Files {
         if ((Test-Path $sourceEnvFile)) {
             Copy-Item $sourceEnvFile $destEnvFile -Force
             Write-Success "Migrated .env from source"
-        } elseif (Test-Path $envTemplate) {
-            Copy-Item $envTemplate $destEnvFile
-            Write-Warn "Created .env from template - please edit with your values"
+        } else {
+            # No .env file - cannot continue
+            Write-Host ""
+            Write-Host "[ERROR] .env file not found!" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "  You must create a .env file before installation can complete." -ForegroundColor Yellow
+            Write-Host "  Template location: $ConfigDir/.env.template" -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "  Required values:" -ForegroundColor Cyan
+            Write-Host "    VAULT_NAME=your-keyvault-name"
+            Write-Host "    RESOURCE_GROUP_NAME=your-resource-group"
+            Write-Host "    SUBSCRIPTION_ID=your-subscription-id (optional)"
+            Write-Host ""
+            Write-Host "  Create the file at: $destEnvFile" -ForegroundColor Cyan
+            Write-Host "  Then re-run this installer." -ForegroundColor Cyan
+            Write-Host ""
+            exit 1
         }
     } else {
         Write-Info "Kept existing .env"
@@ -248,6 +270,22 @@ function Uninstall-Files {
         Write-Success "Removed $InstallRoot"
     } else {
         Write-Info "Install directory not found"
+    }
+    
+    # On Linux/macOS, remove symlinks from ~/.local/bin
+    if (-not $IsWindowsOS) {
+        $commands = @("wr-load", "wr-save", "wr-delete", "wr-list", "wr-clear", "wr-setup")
+        $removedAny = $false
+        foreach ($cmd in $commands) {
+            $linkPath = Join-Path $LocalBin $cmd
+            if (Test-Path $linkPath) {
+                Remove-Item $linkPath -Force
+                $removedAny = $true
+            }
+        }
+        if ($removedAny) {
+            Write-Success "Removed symlinks from ~/.local/bin"
+        }
     }
 }
 
@@ -280,6 +318,16 @@ $MarkerStart
 # Azure KeyVault Secrets Manager
 export WORK_RESOURCES_ROOT="$wslInstallRoot"
 export PATH="$wslLocalBin`:`$PATH"
+
+# wr-load must be a function to set env vars in current shell
+wr-load() {
+    eval "`$(pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/load-env.ps1" -Export bash "`$@")"
+}
+
+# wr-clear must be a function to unset env vars in current shell
+wr-clear() {
+    eval "`$(pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/clear-env.ps1" -Export bash "`$@")"
+}
 $MarkerEnd
 "@
 }
@@ -297,6 +345,16 @@ $MarkerStart
 # Azure KeyVault Secrets Manager
 set -gx WORK_RESOURCES_ROOT "$wslInstallRoot"
 fish_add_path "$wslLocalBin"
+
+# wr-load must be a function to set env vars in current shell
+function wr-load
+    eval (pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/load-env.ps1" -Export fish `$argv)
+end
+
+# wr-clear must be a function to unset env vars in current shell
+function wr-clear
+    eval (pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/clear-env.ps1" -Export fish `$argv)
+end
 $MarkerEnd
 "@
 }
@@ -452,7 +510,7 @@ if (-not $Uninstall) {
     
     Write-Host "`nNext steps:" -ForegroundColor Yellow
     Write-Host "  1. Restart your shell (or source your profile)"
-    Write-Host "  2. Edit your .env file: $ConfigDir/.env"
+    Write-Host "  2. Create your .env file (see .env.template): $ConfigDir/.env"
     Write-Host "  3. Run: wr-setup"
 }
 

@@ -34,4 +34,4 @@ fi
 # Run the PowerShell uninstall script
 echo -e "${GREEN}Running uninstall.ps1...${NC}"
 echo ""
-pwsh -NoProfile -ExecutionPolicy Bypass -File "$SCRIPT_DIR/uninstall.ps1" -Force "$@"
+pwsh -NoProfile -ExecutionPolicy Bypass -File "$SCRIPT_DIR/uninstall.ps1"
