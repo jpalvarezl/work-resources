@@ -310,14 +310,13 @@ $MarkerEnd
 }
 
 function Get-BashConfig {
-    $wslInstallRoot = if ($IsWindowsOS) { Get-WslInstallRoot } else { $InstallRoot }
-    $wslLocalBin = if ($IsWindowsOS) { Get-WslLocalBin } else { Join-Path $HOME ".local/bin" }
+    $localBin = Join-Path $HOME ".local/bin"
     
     return @"
 $MarkerStart
 # Azure KeyVault Secrets Manager
-export WORK_RESOURCES_ROOT="$wslInstallRoot"
-export PATH="$wslLocalBin`:`$PATH"
+export WORK_RESOURCES_ROOT="$InstallRoot"
+export PATH="$localBin`:`$PATH"
 
 # wr-load must be a function to set env vars in current shell
 wr-load() {
@@ -337,14 +336,13 @@ function Get-ZshConfig {
 }
 
 function Get-FishConfig {
-    $wslInstallRoot = if ($IsWindowsOS) { Get-WslInstallRoot } else { $InstallRoot }
-    $wslLocalBin = if ($IsWindowsOS) { Get-WslLocalBin } else { Join-Path $HOME ".local/bin" }
+    $localBin = Join-Path $HOME ".local/bin"
     
     return @"
 $MarkerStart
 # Azure KeyVault Secrets Manager
-set -gx WORK_RESOURCES_ROOT "$wslInstallRoot"
-fish_add_path "$wslLocalBin"
+set -gx WORK_RESOURCES_ROOT "$InstallRoot"
+fish_add_path "$localBin"
 
 # wr-load must be a function to set env vars in current shell
 function wr-load

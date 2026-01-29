@@ -117,24 +117,16 @@ wr-save -Resource myapi -Name key -EnvVarName "MY_CUSTOM_API_KEY"
 
 ### 4. Load Secrets
 
-**PowerShell:**
-```powershell
-wr-load -Resource myapi
-```
+After installation, `wr-load` works the same way in all shells:
 
-**Bash/Zsh (using eval):**
 ```bash
-eval "$(wr-load -Resource myapi -Export bash)"
-```
+# Load secrets for a single resource
+wr-load -Resource myapi
 
-**Fish (using eval):**
-```fish
-eval (wr-load -Resource myapi -Export fish)
-```
-
-**Load multiple resources:**
-```powershell
+# Load multiple resources
 wr-load -Resource "myapi,database"
+
+# Load all resources
 wr-load -Resource all
 ```
 
@@ -273,7 +265,6 @@ wr-delete -Resource myapi -All -Force      # No confirmation
 ```
 work-resources/
 ├── README.md                 # This file
-├── .gitignore
 ├── .env.template             # Configuration template (copy to .env)
 ├── .env                      # Your local configuration (gitignored)
 ├── install.ps1               # CLI installer (cross-platform)
@@ -295,28 +286,28 @@ work-resources/
 
 ## Typical Workflow
 
-```powershell
+```bash
 # One-time setup
-./scripts/setup.ps1
+wr-setup
 
 # Add secrets for your API resource
-./scripts/save-secret.ps1 -Resource myapi -Name api-key
-./scripts/save-secret.ps1 -Resource myapi -Name api-secret
-./scripts/save-secret.ps1 -Resource myapi -Name endpoint
+wr-save -Resource myapi -Name api-key
+wr-save -Resource myapi -Name api-secret
+wr-save -Resource myapi -Name endpoint
 
 # Add secrets for database
-./scripts/save-secret.ps1 -Resource database -Name connection-string
-./scripts/save-secret.ps1 -Resource database -Name password
+wr-save -Resource database -Name connection-string
+wr-save -Resource database -Name password
 
 # View what's configured
-./scripts/list-secrets.ps1
+wr-list
 
 # When running tests
-./scripts/load-env.ps1 -Resource "myapi,database"
+wr-load -Resource "myapi,database"
 npm test  # or your test command
 
 # Clean up
-./scripts/clear-env.ps1
+wr-clear
 ```
 
 ## Security Notes
@@ -329,16 +320,16 @@ npm test  # or your test command
 ## Troubleshooting
 
 ### "Vault not found" error
-Run `./scripts/setup.ps1` to create the vault.
+Run `wr-setup` to create the vault.
 
 ### "Access denied" error
-Run `./scripts/setup.ps1 -Force` to re-apply permissions.
+Run `wr-setup -Force` to re-apply permissions.
 
 ### "az: command not found"
 Install Azure CLI for your platform (see Prerequisites).
 
 ### Secrets not loading
-1. Check `./scripts/list-secrets.ps1 -Verify` to see if secrets exist in vault
+1. Check `wr-list -Verify` to see if secrets exist in vault
 2. Ensure you're logged in: `az account show`
 3. Verify vault name in `.env`
 
