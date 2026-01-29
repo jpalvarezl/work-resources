@@ -148,6 +148,9 @@ if ($resourceList.Count -eq 0) {
 if (-not $Quiet) {
     Write-Step "Loading secrets from vault: $($settings.vaultName)"
     Write-Info "Resources: $($resourceList -join ', ')"
+    if ($resourceList.Count -gt 1) {
+        Write-Warn "Previously loaded resources with colliding environment variable names will overwritten."
+    }
 }
 
 # Collect all secrets to load
