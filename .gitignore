@@ -2,6 +2,9 @@
 .env
 !.env.template
 
+# Generated config (synced from KeyVault via wr-setup)
+config/resources.json
+
 # OS files
 .DS_Store
 Thumbs.db

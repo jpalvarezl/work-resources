@@ -257,6 +257,93 @@ if (-not $vaultExists -or $Force) {
     }
 }
 
+# Step 6: Sync secrets from KeyVault to local resources.json
+Write-Step "Syncing secrets from KeyVault..."
+
+$secretsList = az keyvault secret list --vault-name $settings.vaultName --query "[].name" -o json 2>$null | ConvertFrom-Json
+
+if ($secretsList.Count -eq 0) {
+    Write-Info "No secrets found in vault (this is normal for a new vault)"
+    # Create empty resources.json
+    $resourcesConfig = @{
+        "`$schema" = "https://json-schema.org/draft/2020-12/schema"
+        "`$comment" = "Auto-generated from KeyVault. Do not edit manually - run wr-setup to sync."
+        resources = @{}
+    }
+} else {
+    Write-Info "Found $($secretsList.Count) secret(s) in vault"
+    
+    # Group secrets by resource prefix
+    # Convention: secret names are {resource}-{name}, where resource is everything before the last hyphen segment
+    # But we need to handle multi-segment names like "chat-model-deployment"
+    # Strategy: Group by longest common prefix among secrets
+    
+    $secretsByResource = @{}
+    
+    foreach ($secretName in $secretsList) {
+        # Find resource by looking for other secrets that share a prefix
+        # Simple heuristic: resource is the first hyphen-delimited segment(s) that are shared by multiple secrets
+        # If no grouping found, use the first segment as resource
+        
+        $parts = $secretName -split '-'
+        $resource = $null
+        
+        # Try progressively shorter prefixes to find a group
+        for ($i = $parts.Count - 1; $i -ge 1; $i--) {
+            $candidateResource = ($parts[0..($i-1)] -join '-')
+            $candidatePrefix = "$candidateResource-"
+            
+            # Check if at least one other secret shares this prefix
+            $matchingSecrets = $secretsList | Where-Object { $_ -like "$candidatePrefix*" -and $_ -ne $secretName }
+            if ($matchingSecrets.Count -gt 0) {
+                $resource = $candidateResource
+                break
+            }
+        }
+        
+        # Fallback: use first segment as resource
+        if (-not $resource) {
+            $resource = $parts[0]
+        }
+        
+        # Initialize resource group if needed
+        if (-not $secretsByResource.ContainsKey($resource)) {
+            $secretsByResource[$resource] = @{}
+        }
+        
+        # Generate env var name: uppercase with underscores
+        $envVarName = $secretName.ToUpper() -replace '-', '_'
+        
+        $secretsByResource[$resource][$secretName] = $envVarName
+    }
+    
+    # Build the resources config
+    $resourcesObj = @{}
+    foreach ($resource in $secretsByResource.Keys) {
+        $secretsObj = @{}
+        foreach ($secretName in $secretsByResource[$resource].Keys) {
+            $secretsObj[$secretName] = $secretsByResource[$resource][$secretName]
+        }
+        $resourcesObj[$resource] = @{
+            description = ""
+            secrets = $secretsObj
+        }
+    }
+    
+    $resourcesConfig = @{
+        "`$schema" = "https://json-schema.org/draft/2020-12/schema"
+        "`$comment" = "Auto-generated from KeyVault. Do not edit manually - run wr-setup to sync."
+        resources = $resourcesObj
+    }
+    
+    Write-Success "Grouped into $($secretsByResource.Keys.Count) resource(s)"
+}
+
+# Write resources.json
+$resourcesPath = Join-Path $ConfigRoot "resources.json"
+$resourcesConfig | ConvertTo-Json -Depth 10 | Set-Content $resourcesPath -Encoding UTF8
+Write-Success "Updated resources.json"
+
 # Final summary
 Write-Host "`n+==============================================================+" -ForegroundColor Green
 Write-Host "|                    Setup Complete!                           |" -ForegroundColor Green
