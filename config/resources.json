@@ -7,6 +7,15 @@
       "secrets": {
         "testapp-api-key": "TESTAPP_API_KEY"
       }
+    },
+    "azure-ai-agents-memory-stores": {
+      "description": "",
+      "secrets": {
+        "azure-ai-agents-memory-stores-endpoint": "AZURE_AGENTS_ENDPOINT",
+        "azure-ai-agents-memory-stores-chat-model-deployment": "AZURE_AI_CHAT_MODEL_DEPLOYMENT_NAME",
+        "azure-ai-agents-memory-stores-embedding-model-deployment": "AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME",
+        "azure-ai-agents-memory-stores-model-deployment": "AZURE_AI_MODEL_DEPLOYMENT_NAME"
+      }
     }
   }
 }

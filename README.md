@@ -162,8 +162,8 @@ Add or update a secret in KeyVault.
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `-Resource` | Yes | Resource group (e.g., "myapi", "database") |
-| `-Name` | Yes | Secret name (e.g., "api-key", "connection-string") |
+| `-Resource` | Yes | Resource group (e.g., "myapi", "database"). Must start with a letter and contain only letters, numbers, and hyphens (no underscores). |
+| `-Name` | Yes | Secret name (e.g., "api-key", "connection-string"). Same naming rules as Resource. |
 | `-Value` | No | Secret value (prompts if not provided) |
 | `-EnvVarName` | No | Custom env var name (auto-generated if not provided) |
 

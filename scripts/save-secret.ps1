@@ -9,10 +9,13 @@
     to track the secret-to-environment-variable mapping.
 
 .PARAMETER Resource
-    The resource group name (e.g., "myapp", "database", "shared")
+    The resource group name (e.g., "myapp", "database", "shared").
+    Must start with a letter and contain only letters, numbers, and hyphens.
+    Underscores are not allowed due to Azure KeyVault naming restrictions.
 
 .PARAMETER Name
-    The secret name within the resource (e.g., "api-key", "connection-string")
+    The secret name within the resource (e.g., "api-key", "connection-string").
+    Must start with a letter and contain only letters, numbers, and hyphens.
 
 .PARAMETER Value
     Optional: The secret value. If not provided, prompts interactively (recommended).
