@@ -4,15 +4,15 @@
     Load secrets from Azure KeyVault into environment variables.
 
 .DESCRIPTION
-    Loads secrets for specified resource(s) from KeyVault and sets them as
-    environment variables in the current session. Uses ACCUMULATE mode by
-    default - loading multiple resources adds to existing vars.
+    Loads secrets from KeyVault and sets them as environment variables in the 
+    current session. The environment variable name is read from the 'env-var-name' 
+    tag stored on each secret in KeyVault.
 
 .PARAMETER Resource
-    Resource name(s) to load. Can be:
+    Optional: Filter by resource prefix. Can be:
     - Single: -Resource "resourceA"
     - Multiple: -Resource "resourceA,resourceB"
-    - All: -Resource "all"
+    - All (default if omitted): loads all secrets from the vault
 
 .PARAMETER Export
     Output shell-compatible export commands instead of setting vars in PowerShell.
@@ -26,8 +26,12 @@
     Exit the spawned shell to return to a clean session.
 
 .EXAMPLE
+    ./load-env.ps1
+    Loads all secrets from KeyVault into current PowerShell session.
+
+.EXAMPLE
     ./load-env.ps1 -Resource myapp
-    Loads all secrets for 'myapp' into current PowerShell session.
+    Loads secrets with names starting with 'myapp-' into current session.
 
 .EXAMPLE
     eval (pwsh ./scripts/load-env.ps1 -Resource myapp -Export fish)
@@ -35,11 +39,7 @@
 
 .EXAMPLE
     ./load-env.ps1 -Resource "myapp,shared"
-    Loads secrets for both 'myapp' and 'shared' resources.
-
-.EXAMPLE
-    ./load-env.ps1 -Resource all
-    Loads all secrets from all resources.
+    Loads secrets for both 'myapp' and 'shared' resource prefixes.
 #>
 
 param(
@@ -53,45 +53,6 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-
-# Check for required parameter manually to avoid interactive prompt hanging
-if ([string]::IsNullOrWhiteSpace($Resource)) {
-    if ($Export) {
-        # Output shell command that displays an error message
-        switch ($Export) {
-            "fish" { 
-                Write-Output "echo 'Error: -Resource parameter is required. Usage: wr-load -Resource <name>'" 
-            }
-            default { 
-                Write-Output "echo 'Error: -Resource parameter is required. Usage: wr-load -Resource <name>'" 
-            }
-        }
-    } else {
-        Write-Host "Error: -Resource parameter is required." -ForegroundColor Red
-        Write-Host ""
-        Write-Host "Usage: wr-load -Resource <name>" -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host "Examples:" -ForegroundColor Cyan
-        Write-Host "  wr-load -Resource myapi          # Load secrets for 'myapi'"
-        Write-Host "  wr-load -Resource 'api,db'       # Load multiple resources"
-        Write-Host "  wr-load -Resource all            # Load all resources"
-        Write-Host ""
-        Write-Host "Available resources:" -ForegroundColor Cyan
-        # Use WORK_RESOURCES_ROOT if set, otherwise fall back to script location
-        $projectRoot = if ($env:WORK_RESOURCES_ROOT -and (Test-Path $env:WORK_RESOURCES_ROOT)) {
-            $env:WORK_RESOURCES_ROOT
-        } else {
-            Split-Path $PSScriptRoot -Parent
-        }
-        $configPath = Join-Path (Join-Path $projectRoot "config") "resources.json"
-        if (Test-Path $configPath) {
-            $config = Get-Content $configPath -Raw | ConvertFrom-Json
-            $config.resources.PSObject.Properties.Name | ForEach-Object { Write-Host "  - $_" }
-        }
-    }
-    exit 1
-}
-
 $ScriptRoot = $PSScriptRoot
 
 # Load shared helpers
@@ -99,7 +60,6 @@ $ScriptRoot = $PSScriptRoot
 
 # Resolve paths (supports WORK_RESOURCES_ROOT env var)
 $ProjectRoot = Get-ProjectRoot -ScriptRoot $ScriptRoot
-$ConfigRoot = Join-Path $ProjectRoot "config"
 
 # -----------------------------------------------------------------------------
 # Helper Functions
@@ -140,14 +100,6 @@ function Get-Settings {
     return Get-EnvSettings -ProjectRoot $ProjectRoot
 }
 
-function Get-ResourcesConfig {
-    $resourcesPath = Join-Path $ConfigRoot "resources.json"
-    if (-not (Test-Path $resourcesPath)) {
-        throw "Resources file not found. Run setup.ps1 first."
-    }
-    return Get-Content $resourcesPath -Raw | ConvertFrom-Json
-}
-
 function Test-AzureLogin {
     $account = az account show 2>$null | ConvertFrom-Json
     if (-not $account) {
@@ -173,52 +125,49 @@ Write-Success "Logged in as: $($account.user.name)"
 
 # Load configuration
 $settings = Get-Settings
-$resourcesConfig = Get-ResourcesConfig
 
-# Parse resource parameter
-$resourceList = if ($Resource -eq "all") {
-    $resourcesConfig.resources.PSObject.Properties.Name
-} else {
-    $Resource -split "," | ForEach-Object { $_.Trim() }
+Write-Step "Loading secrets from vault: $($settings.vaultName)"
+
+# Parse resource filter (if provided)
+$resourceFilters = @()
+if (-not [string]::IsNullOrWhiteSpace($Resource)) {
+    $resourceFilters = $Resource -split "," | ForEach-Object { $_.Trim() }
+    Write-Info "Filtering by resource(s): $($resourceFilters -join ', ')"
 }
 
-if ($resourceList.Count -eq 0) {
-    Write-Warn "No resources found in configuration."
-    Write-Stderr "  Add secrets using: wr-save -Resource <name> -Name <secret-name>"
+# List all secrets from KeyVault with their tags
+$secretsList = az keyvault secret list --vault-name $settings.vaultName --query "[].{name:name, tags:tags}" -o json 2>$null | ConvertFrom-Json
+
+if ($null -eq $secretsList -or $secretsList.Count -eq 0) {
+    Write-Warn "No secrets found in vault."
+    Write-Stderr "  Add secrets using: wr-save -Resource <name> -Name <secret-name> -EnvVarName <ENV_VAR>"
     exit 0
 }
 
-Write-Step "Loading secrets from vault: $($settings.vaultName)"
-Write-Info "Resources: $($resourceList -join ', ')"
-if ($resourceList.Count -gt 1) {
-    Write-Warn "Previously loaded resources with colliding environment variable names will overwritten."
-}
-
-# Collect all secrets to load
-$secretsToLoad = @{}
-$missingResources = @()
-
-foreach ($res in $resourceList) {
-    $resourceData = $resourcesConfig.resources.$res
-    if (-not $resourceData) {
-        $missingResources += $res
-        continue
+# Filter secrets by resource tag if specified
+$secretsToLoad = @()
+foreach ($secret in $secretsList) {
+    if ($resourceFilters.Count -gt 0) {
+        $secretResource = $null
+        if ($secret.tags -and $secret.tags.resource) {
+            $secretResource = $secret.tags.resource
+        }
+        
+        if ($secretResource -notin $resourceFilters) {
+            continue
+        }
     }
-    
-    foreach ($prop in $resourceData.secrets.PSObject.Properties) {
-        $secretName = $prop.Name      # KeyVault secret name (e.g., "myapp-api-key")
-        $envVarName = $prop.Value     # Environment variable name (e.g., "MYAPP_API_KEY")
-        $secretsToLoad[$secretName] = $envVarName
-    }
-}
-
-if ($missingResources.Count -gt 0) {
-    Write-Warn "Resources not found in config: $($missingResources -join ', ')"
+    $secretsToLoad += $secret.name
 }
 
 if ($secretsToLoad.Count -eq 0) {
-    Write-Warn "No secrets found for specified resources."
+    Write-Warn "No secrets found matching the specified resource filter(s)."
+    Write-Stderr "  Use wr-list to see available resources and secrets."
     exit 0
+}
+
+if ($resourceFilters.Count -gt 1) {
+    Write-Warn "Loading from multiple resources - secrets with colliding environment variable names will be overwritten."
 }
 
 # Fetch secrets from KeyVault
@@ -226,30 +175,44 @@ Write-Step "Fetching $($secretsToLoad.Count) secret(s) from KeyVault..."
 
 $loadedSecrets = @{}
 $failedSecrets = @()
+$missingTagSecrets = @()
 $current = 0
 $total = $secretsToLoad.Count
 
-foreach ($entry in $secretsToLoad.GetEnumerator()) {
+foreach ($secretName in $secretsToLoad) {
     $current++
-    $secretName = $entry.Key
-    $envVarName = $entry.Value
     
     $percentComplete = [math]::Round(($current / $total) * 100)
     Write-Progress -Activity "Loading secrets" -Status "$secretName" -PercentComplete $percentComplete
     
     try {
-        $value = az keyvault secret show `
+        # Fetch secret with its tags
+        $secretData = az keyvault secret show `
             --vault-name $settings.vaultName `
             --name $secretName `
-            --query "value" -o tsv 2>$null
+            --query "{value:value, tags:tags}" -o json 2>$null | ConvertFrom-Json
         
-        if ($LASTEXITCODE -eq 0 -and $value) {
-            $loadedSecrets[$envVarName] = $value
-            Write-Stderr "  [OK] $secretName -> `$env:$envVarName"
-        } else {
+        if ($LASTEXITCODE -ne 0 -or $null -eq $secretData) {
             $failedSecrets += $secretName
-            Write-Err "$secretName (not found in vault)"
+            Write-Err "$secretName (failed to fetch)"
+            continue
         }
+        
+        # Get env var name from tag
+        $envVarName = $null
+        if ($secretData.tags -and $secretData.tags."env-var-name") {
+            $envVarName = $secretData.tags."env-var-name"
+        }
+        
+        if ([string]::IsNullOrWhiteSpace($envVarName)) {
+            $missingTagSecrets += $secretName
+            Write-Err "$secretName (missing 'env-var-name' tag - run wr-migrate to fix)"
+            continue
+        }
+        
+        $loadedSecrets[$envVarName] = $secretData.value
+        Write-Stderr "  [OK] $secretName -> `$env:$envVarName"
+        
     } catch {
         $failedSecrets += $secretName
         Write-Err "$secretName (error: $_)"
@@ -260,6 +223,10 @@ Write-Progress -Activity "Loading secrets" -Completed
 
 if ($loadedSecrets.Count -eq 0) {
     Write-Stderr "`n[ERROR] No secrets were loaded."
+    if ($missingTagSecrets.Count -gt 0) {
+        Write-Stderr "  $($missingTagSecrets.Count) secret(s) are missing the 'env-var-name' tag."
+        Write-Stderr "  Run: ./scripts/migrate-secrets.ps1 to add tags."
+    }
     exit 1
 }
 
@@ -269,6 +236,9 @@ if ($Export) {
     Write-Stderr "`n[SUCCESS] Loaded $($loadedSecrets.Count) secret(s)"
     if ($failedSecrets.Count -gt 0) {
         Write-Warn "$($failedSecrets.Count) secret(s) failed to load"
+    }
+    if ($missingTagSecrets.Count -gt 0) {
+        Write-Warn "$($missingTagSecrets.Count) secret(s) missing 'env-var-name' tag"
     }
     
     foreach ($entry in $loadedSecrets.GetEnumerator()) {
@@ -315,6 +285,9 @@ if ($Export) {
     
     if ($failedSecrets.Count -gt 0) {
         Write-Warn "$($failedSecrets.Count) secret(s) failed to load"
+    }
+    if ($missingTagSecrets.Count -gt 0) {
+        Write-Warn "$($missingTagSecrets.Count) secret(s) missing 'env-var-name' tag - run wr-migrate to fix"
     }
     
     Write-Host "`nTip: Use ./clear-env.ps1 to remove loaded secrets from session`n" -ForegroundColor DarkGray

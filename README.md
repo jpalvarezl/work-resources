@@ -6,10 +6,9 @@ A cross-platform PowerShell Core project to securely manage test environment var
 
 - ✅ **Auto-provisioning**: Creates KeyVault and resource group if they don't exist
 - ✅ **Cross-platform**: Works on Windows, macOS, and WSL/Linux
-- ✅ **Resource-based organization**: Group secrets by resource (API, database, etc.)
-- ✅ **Accumulate mode**: Load multiple resources without clearing previous ones
+- ✅ **Resource-based organization**: Group secrets by resource prefix (API, database, etc.)
+- ✅ **Tag-based mapping**: Environment variable names stored as tags in KeyVault
 - ✅ **Secure input**: Masked prompts for secret values (never in shell history)
-- ✅ **Local tracking**: `resources.json` maps secrets to environment variable names
 - ✅ **Global CLI**: Install `wr-*` commands for use from any directory
 
 ## Installation
@@ -106,28 +105,27 @@ This will:
 
 ```powershell
 # Interactive (recommended - value is masked)
-wr-save -Resource myapi -Name api-key
+wr-save -Resource myapi -Name api-key -EnvVarName MYAPI_API_KEY
 
 # With value inline (less secure - appears in history)
-wr-save -Resource myapi -Name endpoint -Value "https://api.example.com"
-
-# Custom environment variable name
-wr-save -Resource myapi -Name key -EnvVarName "MY_CUSTOM_API_KEY"
+wr-save -Resource myapi -Name endpoint -EnvVarName MYAPI_ENDPOINT -Value "https://api.example.com"
 ```
+
+> **Note:** The `-EnvVarName` parameter is required. This is the environment variable name that will be set when you load the secret.
 
 ### 4. Load Secrets
 
 After installation, `wr-load` works the same way in all shells:
 
 ```bash
-# Load secrets for a single resource
+# Load all secrets from the vault
+wr-load
+
+# Load secrets for a specific resource prefix
 wr-load -Resource myapi
 
 # Load multiple resources
 wr-load -Resource "myapi,database"
-
-# Load all resources
-wr-load -Resource all
 ```
 
 > **Note:** When loading multiple resources, if any share the same environment variable names, later values will overwrite earlier ones.
@@ -164,7 +162,7 @@ After installation, these commands are available from any directory:
 | `wr-setup` | Initial KeyVault setup |
 | `wr-save` | Save a secret to KeyVault |
 | `wr-load` | Load secrets into environment |
-| `wr-list` | List configured secrets |
+| `wr-list` | List secrets in KeyVault |
 | `wr-delete` | Delete a secret from KeyVault |
 | `wr-clear` | Clear secrets from environment |
 
@@ -182,49 +180,50 @@ wr-setup -Force   # Re-apply permissions
 Add or update a secret in KeyVault.
 
 ```powershell
-wr-save -Resource <name> -Name <secret-name> [-Value <value>] [-EnvVarName <custom-var>]
+wr-save -Resource <name> -Name <secret-name> -EnvVarName <env-var> [-Value <value>]
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `-Resource` | Yes | Resource group (e.g., "myapi", "database"). Must start with a letter and contain only letters, numbers, and hyphens (no underscores). |
+| `-Resource` | Yes | Resource prefix (e.g., "myapi", "database"). Must start with a letter and contain only letters, numbers, and hyphens (no underscores). |
 | `-Name` | Yes | Secret name (e.g., "api-key", "connection-string"). Same naming rules as Resource. |
+| `-EnvVarName` | Yes | Environment variable name (e.g., "MYAPI_API_KEY"). Must start with a letter/underscore and contain only letters, numbers, and underscores. |
 | `-Value` | No | Secret value (prompts if not provided) |
-| `-EnvVarName` | No | Custom env var name (auto-generated if not provided) |
 
-**Naming convention**: `{resource}-{name}` → `{RESOURCE}_{NAME}`
-- `myapi` + `api-key` → KeyVault: `myapi-api-key` → Env: `MYAPI_API_KEY`
+**Naming**: The secret is stored in KeyVault as `{resource}-{name}` with an `env-var-name` tag.
+- Example: `wr-save -Resource myapi -Name api-key -EnvVarName MYAPI_API_KEY`
+- KeyVault secret name: `myapi-api-key`
+- Tag: `env-var-name=MYAPI_API_KEY`
 
 ### `wr-load`
 
 Load secrets into current session as environment variables.
 
 ```powershell
-wr-load -Resource <name|all> [-Export <shell>] [-SpawnShell]
+wr-load [-Resource <name>] [-Export <shell>] [-SpawnShell]
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `-Resource` | Yes | Resource name(s) or "all" |
+| `-Resource` | No | Resource prefix(es) to filter (loads all if omitted) |
 | `-Export` | No | Output format: `bash`, `zsh`, `fish`, `powershell` |
 | `-SpawnShell` | No | Spawn new shell with secrets (isolated) |
 
 **Examples**:
 ```powershell
-wr-load -Resource myapi                    # Single resource
-wr-load -Resource "myapi,shared"           # Multiple (comma-separated)
-wr-load -Resource all                      # All resources
+wr-load                                    # Load all secrets
+wr-load -Resource myapi                    # Filter by prefix
+wr-load -Resource "myapi,shared"           # Multiple prefixes
 wr-load -Resource myapi -SpawnShell        # Isolated shell
 ```
 
 ### `wr-list`
 
-Display configured resources and secrets.
+Display secrets in KeyVault.
 
 ```powershell
-wr-list                     # List from config
-wr-list -Verify             # Verify against KeyVault
-wr-list -Resource myapi     # Filter by resource
+wr-list                     # List all secrets from KeyVault
+wr-list -Resource myapi     # Filter by resource prefix
 ```
 
 ### `wr-clear`
@@ -239,7 +238,7 @@ wr-clear -Force             # Skip confirmation
 
 ### `wr-delete`
 
-Delete secrets from KeyVault and local configuration.
+Delete secrets from KeyVault.
 
 ```powershell
 wr-delete -Resource <name> -Name <secret-name> [-Force]
@@ -248,40 +247,24 @@ wr-delete -Resource <name> -All [-Force]
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `-Resource` | Yes | Resource group name |
+| `-Resource` | Yes | Resource prefix |
 | `-Name` | No* | Secret name to delete (*required unless -All is used) |
-| `-All` | No | Delete all secrets for the resource |
+| `-All` | No | Delete all secrets with the resource prefix |
 | `-Force` | No | Skip confirmation prompt |
 
 **Examples**:
 ```powershell
 wr-delete -Resource myapi -Name api-key    # Delete single secret
-wr-delete -Resource myapi -All             # Delete entire resource
+wr-delete -Resource myapi -All             # Delete all myapi-* secrets
 wr-delete -Resource myapi -All -Force      # No confirmation
 ```
 
 ## Project Structure
 
 ```
-work-resources/
-├── README.md                 # This file
-├── .env.template             # Configuration template (copy to .env)
-├── .env                      # Your local configuration (gitignored)
-├── install.ps1               # CLI installer (cross-platform)
-├── install.sh                # CLI installer wrapper (macOS/Linux)
-├── uninstall.ps1             # CLI uninstaller
-├── bin/                      # Shell wrappers for wr-* commands
-│   ├── wr-load, wr-save, ... # Bash wrappers
-│   └── wr-load.cmd, ...      # Windows wrappers
-├── config/
-│   └── resources.json        # Secret → env var mappings (auto-managed)
-└── scripts/
-    ├── common.ps1            # Shared helper functions
-    ├── setup.ps1             # Initial setup & vault creation
-    ├── load-env.ps1          # Load secrets as env vars
-    ├── save-secret.ps1       # Add/update secrets
-    ├── list-secrets.ps1      # Show configured secrets
-    └── clear-env.ps1         # Clear loaded env vars
+- `bin/` - Shell wrappers that enable the `wr-*` commands
+- `scripts/` - PowerShell scripts that do the actual work
+- `.env` - Your local vault configuration (gitignored)
 ```
 
 ## Typical Workflow
@@ -291,13 +274,13 @@ work-resources/
 wr-setup
 
 # Add secrets for your API resource
-wr-save -Resource myapi -Name api-key
-wr-save -Resource myapi -Name api-secret
-wr-save -Resource myapi -Name endpoint
+wr-save -Resource myapi -Name api-key -EnvVarName MYAPI_API_KEY
+wr-save -Resource myapi -Name api-secret -EnvVarName MYAPI_API_SECRET
+wr-save -Resource myapi -Name endpoint -EnvVarName MYAPI_ENDPOINT
 
 # Add secrets for database
-wr-save -Resource database -Name connection-string
-wr-save -Resource database -Name password
+wr-save -Resource database -Name connection-string -EnvVarName DATABASE_CONNECTION_STRING
+wr-save -Resource database -Name password -EnvVarName DATABASE_PASSWORD
 
 # View what's configured
 wr-list
@@ -312,10 +295,11 @@ wr-clear
 
 ## Security Notes
 
-- **Never commit secrets**: Only secret *names* are stored in `resources.json`, not values
+- **Never commit secrets**: Secret values are stored only in KeyVault, not locally
 - **Use interactive input**: Prefer prompted input over `-Value` parameter to keep secrets out of shell history
 - **Session isolation**: Consider `-SpawnShell` for extra isolation; exit returns to clean session
 - **RBAC permissions**: The setup script uses "Key Vault Secrets Officer" role (least privilege for this use case)
+- **Tags as metadata**: Environment variable names are stored as tags on the secrets in KeyVault
 
 ## Troubleshooting
 
@@ -328,10 +312,33 @@ Run `wr-setup -Force` to re-apply permissions.
 ### "az: command not found"
 Install Azure CLI for your platform (see Prerequisites).
 
-### Secrets not loading
-1. Check `wr-list -Verify` to see if secrets exist in vault
+### Secrets not loading / "missing env-var-name tag"
+1. Run `wr-list` to see secrets and their tags
 2. Ensure you're logged in: `az account show`
 3. Verify vault name in `.env`
+
+## Maintenance Scripts
+
+### `migrate-secrets.ps1`
+
+A utility script for migrating secrets that are missing required tags (`env-var-name` and `resource`). This is useful for:
+
+- Cleaning up secrets created before the tag-based system
+- Fixing secrets with missing or incomplete tags
+- Bulk-tagging existing secrets
+
+```powershell
+# Preview what needs migration
+./scripts/migrate-secrets.ps1 -DryRun
+
+# Run migration interactively
+./scripts/migrate-secrets.ps1
+
+# Skip confirmation prompts (still prompts for tag values)
+./scripts/migrate-secrets.ps1 -Force
+```
+
+> **Note:** This script is not part of the `wr-*` CLI suite—it's a one-off maintenance tool.
 
 ## License
 

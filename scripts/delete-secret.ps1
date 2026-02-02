@@ -4,11 +4,11 @@
     Delete a secret from Azure KeyVault.
 
 .DESCRIPTION
-    Removes a secret from KeyVault and updates the local resources.json config.
-    Can delete individual secrets or all secrets for a resource.
+    Removes a secret from KeyVault. Can delete individual secrets or all 
+    secrets for a resource prefix.
 
 .PARAMETER Resource
-    The resource group name (e.g., "myapp", "database", "shared").
+    The resource prefix (e.g., "myapp", "database", "shared").
     Must start with a letter and contain only letters, numbers, and hyphens.
 
 .PARAMETER Name
@@ -16,7 +16,7 @@
     Required unless -All is specified.
 
 .PARAMETER All
-    Delete all secrets for the specified resource.
+    Delete all secrets with names starting with the specified resource prefix.
 
 .PARAMETER Force
     Skip confirmation prompt.
@@ -27,7 +27,7 @@
 
 .EXAMPLE
     ./delete-secret.ps1 -Resource myapp -All
-    Deletes all secrets for the 'myapp' resource after confirmation.
+    Deletes all secrets with names starting with 'myapp-' after confirmation.
 
 .EXAMPLE
     ./delete-secret.ps1 -Resource myapp -Name api-key -Force
@@ -64,7 +64,6 @@ $ScriptRoot = $PSScriptRoot
 
 # Resolve paths (supports WORK_RESOURCES_ROOT env var)
 $ProjectRoot = Get-ProjectRoot -ScriptRoot $ScriptRoot
-$ConfigRoot = Join-Path $ProjectRoot "config"
 
 # -----------------------------------------------------------------------------
 # Helper Functions
@@ -99,20 +98,6 @@ function Get-Settings {
     return Get-EnvSettings -ProjectRoot $ProjectRoot
 }
 
-function Get-ResourcesConfig {
-    $resourcesPath = Join-Path $ConfigRoot "resources.json"
-    if (-not (Test-Path $resourcesPath)) {
-        throw "Resources file not found. Run setup.ps1 first."
-    }
-    return Get-Content $resourcesPath -Raw | ConvertFrom-Json
-}
-
-function Save-ResourcesConfig {
-    param($Config)
-    $resourcesPath = Join-Path $ConfigRoot "resources.json"
-    $Config | ConvertTo-Json -Depth 10 | Set-Content $resourcesPath -Encoding UTF8
-}
-
 function Test-AzureLogin {
     $account = az account show 2>$null | ConvertFrom-Json
     if (-not $account) {
@@ -127,6 +112,12 @@ function Test-SecretExistsInVault {
     param([string]$VaultName, [string]$SecretName)
     $secret = az keyvault secret show --vault-name $VaultName --name $SecretName 2>$null
     return $null -ne $secret
+}
+
+function Get-SecretEnvVarName {
+    param([string]$VaultName, [string]$SecretName)
+    $secretData = az keyvault secret show --vault-name $VaultName --name $SecretName --query "tags.\"env-var-name\"" -o tsv 2>$null
+    return $secretData
 }
 
 function Remove-SecretFromVault {
@@ -148,65 +139,56 @@ Write-Success "Logged in as: $($account.user.name)"
 
 # Load configuration
 $settings = Get-Settings
-$resourcesConfig = Get-ResourcesConfig
-
-# Check if resource exists in config
-$resourceData = $resourcesConfig.resources.$Resource
-$resourceExistsInConfig = $null -ne $resourceData
 
 # Build list of secrets to delete
 $secretsToDelete = @()
 
 if ($All) {
-    if ($resourceExistsInConfig -and $resourceData.secrets) {
-        foreach ($prop in $resourceData.secrets.PSObject.Properties) {
+    # List all secrets from vault and filter by resource tag
+    Write-Step "Finding secrets with resource tag '$Resource'..."
+    
+    $allSecrets = az keyvault secret list --vault-name $settings.vaultName --query "[].{name:name, tags:tags}" -o json 2>$null | ConvertFrom-Json
+    
+    foreach ($secret in $allSecrets) {
+        if ($secret.tags -and $secret.tags.resource -eq $Resource) {
+            $envVarName = if ($secret.tags."env-var-name") { $secret.tags."env-var-name" } else { $null }
             $secretsToDelete += @{
-                SecretName = $prop.Name
-                EnvVarName = $prop.Value
+                SecretName = $secret.name
+                EnvVarName = $envVarName
             }
         }
     }
     
     if ($secretsToDelete.Count -eq 0) {
-        Write-Err "Resource '$Resource' not found in configuration or has no secrets."
-        Write-Host "  Run ./list-secrets.ps1 to see available resources.`n" -ForegroundColor DarkGray
+        Write-Err "No secrets found with resource tag '$Resource' in vault."
+        Write-Host "  Run wr-list to see available secrets.`n" -ForegroundColor DarkGray
         exit 1
     }
 } else {
     $secretName = "$Resource-$Name"
-    $envVarName = $null
-    
-    # Check if secret exists in config
-    $secretExistsInConfig = $false
-    if ($resourceExistsInConfig -and $resourceData.secrets.PSObject.Properties[$secretName]) {
-        $secretExistsInConfig = $true
-        $envVarName = $resourceData.secrets.$secretName
-    }
     
     # Check if secret exists in KeyVault
     Write-Step "Checking if secret exists..."
     $secretExistsInVault = Test-SecretExistsInVault -VaultName $settings.vaultName -SecretName $secretName
     
-    if (-not $secretExistsInConfig -and -not $secretExistsInVault) {
-        Write-Err "Secret '$secretName' not found."
-        Write-Host "  - Not in local configuration (resources.json)" -ForegroundColor DarkGray
-        Write-Host "  - Not in KeyVault '$($settings.vaultName)'" -ForegroundColor DarkGray
+    if (-not $secretExistsInVault) {
+        Write-Err "Secret '$secretName' not found in KeyVault '$($settings.vaultName)'."
         Write-Host "`n  The secret may have already been deleted or never existed.`n" -ForegroundColor DarkGray
         exit 1
     }
     
+    $envVarName = Get-SecretEnvVarName -VaultName $settings.vaultName -SecretName $secretName
+    
     $secretsToDelete += @{
         SecretName = $secretName
         EnvVarName = $envVarName
-        ExistsInConfig = $secretExistsInConfig
-        ExistsInVault = $secretExistsInVault
     }
 }
 
 # Display what will be deleted
 Write-Step "Secrets to delete from '$($settings.vaultName)':"
 foreach ($secret in $secretsToDelete) {
-    $envInfo = if ($secret.EnvVarName) { " -> `$env:$($secret.EnvVarName)" } else { "" }
+    $envInfo = if ($secret.EnvVarName) { " -> `$env:$($secret.EnvVarName)" } else { " (no env-var-name tag)" }
     Write-Host "  - $($secret.SecretName)$envInfo" -ForegroundColor Yellow
 }
 
@@ -226,61 +208,23 @@ $deletedCount = 0
 $failedCount = 0
 
 foreach ($secret in $secretsToDelete) {
-    $existsInVault = if ($null -ne $secret.ExistsInVault) { 
-        $secret.ExistsInVault 
-    } else { 
-        Test-SecretExistsInVault -VaultName $settings.vaultName -SecretName $secret.SecretName 
-    }
-    
-    if ($existsInVault) {
-        $deleted = Remove-SecretFromVault -VaultName $settings.vaultName -SecretName $secret.SecretName
-        if ($deleted) {
-            Write-Success "Deleted: $($secret.SecretName)"
-            $deletedCount++
-        } else {
-            Write-Err "Failed to delete: $($secret.SecretName)"
-            $failedCount++
-        }
+    $deleted = Remove-SecretFromVault -VaultName $settings.vaultName -SecretName $secret.SecretName
+    if ($deleted) {
+        Write-Success "Deleted: $($secret.SecretName)"
+        $deletedCount++
     } else {
-        Write-Warn "Not in KeyVault (skipped): $($secret.SecretName)"
+        Write-Err "Failed to delete: $($secret.SecretName)"
+        $failedCount++
     }
 }
-
-# Update local configuration
-Write-Step "Updating local configuration..."
-
-if ($All) {
-    # Remove entire resource
-    $resourcesConfig.resources.PSObject.Properties.Remove($Resource)
-    Write-Success "Removed resource '$Resource' from resources.json"
-} else {
-    # Remove single secret
-    if ($resourceExistsInConfig -and $resourceData.secrets.PSObject.Properties[$secretsToDelete[0].SecretName]) {
-        $resourceData.secrets.PSObject.Properties.Remove($secretsToDelete[0].SecretName)
-        
-        # If no more secrets in resource, remove the resource too
-        $remainingSecrets = @($resourceData.secrets.PSObject.Properties).Count
-        if ($remainingSecrets -eq 0) {
-            $resourcesConfig.resources.PSObject.Properties.Remove($Resource)
-            Write-Success "Removed secret and empty resource '$Resource' from resources.json"
-        } else {
-            Write-Success "Removed secret from resources.json ($remainingSecrets secret(s) remaining in resource)"
-        }
-    } else {
-        Write-Info "Secret was not in resources.json (already clean)"
-    }
-}
-
-Save-ResourcesConfig -Config $resourcesConfig
 
 # Summary
 Write-Host "`n+==============================================================+" -ForegroundColor Green
 Write-Host "|                    Deletion Complete                         |" -ForegroundColor Green
 Write-Host "+==============================================================+`n" -ForegroundColor Green
 
-Write-Host "Summary:"
-Write-Host "  Deleted from KeyVault: $deletedCount"
+Write-Host "Deleted $deletedCount secret(s)" -ForegroundColor White
 if ($failedCount -gt 0) {
-    Write-Host "  Failed: $failedCount" -ForegroundColor Red
+    Write-Host "Failed to delete $failedCount secret(s)" -ForegroundColor Red
 }
 Write-Host ""
