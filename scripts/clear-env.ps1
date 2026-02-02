@@ -5,13 +5,14 @@
 
 .DESCRIPTION
     Removes environment variables that were loaded by load-env.ps1.
-    Reads from resources.json to determine which variables to clear.
+    Queries KeyVault to determine which variables to clear based on
+    the 'env-var-name' tags.
 
 .PARAMETER Resource
-    Clear only secrets for a specific resource. If not specified, clears all.
+    Clear only secrets for a specific resource prefix. If not specified, clears all.
 
-.PARAMETER All
-    Clear all secrets from all resources.
+.PARAMETER Force
+    Skip confirmation prompt.
 
 .PARAMETER Export
     Output shell-compatible unset commands instead of clearing vars in PowerShell.
@@ -25,16 +26,15 @@
 
 .EXAMPLE
     ./clear-env.ps1 -Resource myapp
-    Clears only secrets from the 'myapp' resource.
+    Clears only secrets with names starting with 'myapp-'.
 
 .EXAMPLE
-    ./clear-env.ps1 -All -Force
+    ./clear-env.ps1 -Force
     Clears all secrets without confirmation prompt.
 #>
 
 param(
     [string]$Resource,
-    [switch]$All,
     [switch]$Force,
     [ValidateSet("fish", "bash", "zsh", "powershell", "")]
     [string]$Export = ""
@@ -48,18 +48,22 @@ $ScriptRoot = $PSScriptRoot
 
 # Resolve paths (supports WORK_RESOURCES_ROOT env var)
 $ProjectRoot = Get-ProjectRoot -ScriptRoot $ScriptRoot
-$ConfigRoot = Join-Path $ProjectRoot "config"
 
 # -----------------------------------------------------------------------------
 # Helper Functions
 # -----------------------------------------------------------------------------
 
-function Get-ResourcesConfig {
-    $resourcesPath = Join-Path $ConfigRoot "resources.json"
-    if (-not (Test-Path $resourcesPath)) {
-        throw "Resources file not found. Run setup.ps1 first."
+function Get-Settings {
+    return Get-EnvSettings -ProjectRoot $ProjectRoot
+}
+
+function Test-AzureLogin {
+    $account = az account show 2>$null | ConvertFrom-Json
+    if (-not $account) {
+        az login | Out-Null
+        $account = az account show | ConvertFrom-Json
     }
-    return Get-Content $resourcesPath -Raw | ConvertFrom-Json
+    return $account
 }
 
 # -----------------------------------------------------------------------------
@@ -74,36 +78,40 @@ if (-not $SilentMode) {
 }
 
 # Load configuration
-$resourcesConfig = Get-ResourcesConfig
+$settings = Get-Settings
 
-# Determine which resources to clear
-$resourceNames = $resourcesConfig.resources.PSObject.Properties.Name
+# Authenticate with Azure (silently in Export mode)
+if (-not $SilentMode) {
+    Write-Host "`nVerifying Azure authentication..." -ForegroundColor DarkGray
+}
+$account = Test-AzureLogin
 
-if ($resourceNames.Count -eq 0) {
+# List all secrets from KeyVault with their tags
+$secretsList = az keyvault secret list --vault-name $settings.vaultName --query "[].{name:name, tags:tags}" -o json 2>$null | ConvertFrom-Json
+
+if ($null -eq $secretsList -or $secretsList.Count -eq 0) {
     if (-not $SilentMode) {
-        Write-Host "`n  No resources configured." -ForegroundColor Yellow
+        Write-Host "`n  No secrets in vault." -ForegroundColor Yellow
     }
     exit 0
 }
 
-# Filter by resource if specified
+# Filter by resource tag if specified
 if (-not [string]::IsNullOrWhiteSpace($Resource)) {
-    if ($Resource -notin $resourceNames) {
+    $secretsList = $secretsList | Where-Object { $_.tags -and $_.tags.resource -eq $Resource }
+    if ($secretsList.Count -eq 0) {
         if (-not $SilentMode) {
-            Write-Host "`n  Resource '$Resource' not found." -ForegroundColor Red
-            Write-Host "  Available: $($resourceNames -join ', ')`n" -ForegroundColor DarkGray
+            Write-Host "`n  No secrets found with resource tag '$Resource'." -ForegroundColor Red
         }
         exit 1
     }
-    $resourceNames = @($Resource)
 }
 
-# Collect all env vars to clear
+# Collect all env vars to clear from tags
 $envVarsToClear = @()
-foreach ($resName in $resourceNames) {
-    $resourceData = $resourcesConfig.resources.$resName
-    foreach ($prop in $resourceData.secrets.PSObject.Properties) {
-        $envVarName = $prop.Value
+foreach ($secret in $secretsList) {
+    if ($secret.tags -and $secret.tags."env-var-name") {
+        $envVarName = $secret.tags."env-var-name"
         if ($envVarName -notin $envVarsToClear) {
             $envVarsToClear += $envVarName
         }
@@ -112,7 +120,7 @@ foreach ($resName in $resourceNames) {
 
 if ($envVarsToClear.Count -eq 0) {
     if (-not $SilentMode) {
-        Write-Host "`n  No environment variables to clear." -ForegroundColor Yellow
+        Write-Host "`n  No environment variables to clear (secrets missing 'env-var-name' tag)." -ForegroundColor Yellow
     }
     exit 0
 }

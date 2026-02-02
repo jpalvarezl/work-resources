@@ -5,8 +5,8 @@
 
 .DESCRIPTION
     Adds or updates a secret in KeyVault with the naming convention:
-    {resource}-{name}. Also updates the local resources.json config
-    to track the secret-to-environment-variable mapping.
+    {resource}-{name}. The environment variable name is stored as a tag
+    on the secret in KeyVault (env-var-name tag).
 
 .PARAMETER Resource
     The resource group name (e.g., "myapp", "database", "shared").
@@ -21,20 +21,21 @@
     Optional: The secret value. If not provided, prompts interactively (recommended).
 
 .PARAMETER EnvVarName
-    Optional: Custom environment variable name. If not provided, auto-generates
-    from resource and name (e.g., "myapp" + "api-key" -> "MYAPP_API_KEY")
+    Required: The environment variable name to use when loading this secret.
+    Must start with a letter or underscore and contain only letters, numbers, 
+    and underscores (e.g., "OPENAI_API_KEY", "DATABASE_URL").
 
 .EXAMPLE
-    ./save-secret.ps1 -Resource myapp -Name api-key
+    ./save-secret.ps1 -Resource myapp -Name api-key -EnvVarName "MYAPP_API_KEY"
     Prompts for the value interactively (secure, not in shell history).
 
 .EXAMPLE
-    ./save-secret.ps1 -Resource myapp -Name api-key -Value "secret123"
+    ./save-secret.ps1 -Resource myapp -Name api-key -EnvVarName "MYAPP_API_KEY" -Value "secret123"
     Sets value directly (less secure, appears in shell history).
 
 .EXAMPLE
-    ./save-secret.ps1 -Resource myapp -Name api-key -EnvVarName "MY_CUSTOM_VAR"
-    Uses a custom environment variable name instead of auto-generated one.
+    ./save-secret.ps1 -Resource shared -Name openai-key -EnvVarName "OPENAI_API_KEY"
+    Multiple resources can use the same env var name if desired.
 #>
 
 param(
@@ -48,6 +49,8 @@ param(
     
     [string]$Value,
     
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[A-Za-z_][A-Za-z0-9_]*$')]
     [string]$EnvVarName
 )
 
@@ -59,7 +62,6 @@ $ScriptRoot = $PSScriptRoot
 
 # Resolve paths (supports WORK_RESOURCES_ROOT env var)
 $ProjectRoot = Get-ProjectRoot -ScriptRoot $ScriptRoot
-$ConfigRoot = Join-Path $ProjectRoot "config"
 
 # -----------------------------------------------------------------------------
 # Helper Functions
@@ -84,20 +86,6 @@ function Get-Settings {
     return Get-EnvSettings -ProjectRoot $ProjectRoot
 }
 
-function Get-ResourcesConfig {
-    $resourcesPath = Join-Path $ConfigRoot "resources.json"
-    if (-not (Test-Path $resourcesPath)) {
-        throw "Resources file not found. Run setup.ps1 first."
-    }
-    return Get-Content $resourcesPath -Raw | ConvertFrom-Json
-}
-
-function Save-ResourcesConfig {
-    param($Config)
-    $resourcesPath = Join-Path $ConfigRoot "resources.json"
-    $Config | ConvertTo-Json -Depth 10 | Set-Content $resourcesPath -Encoding UTF8
-}
-
 function Test-AzureLogin {
     $account = az account show 2>$null | ConvertFrom-Json
     if (-not $account) {
@@ -106,13 +94,6 @@ function Test-AzureLogin {
         $account = az account show | ConvertFrom-Json
     }
     return $account
-}
-
-function ConvertTo-EnvVarName {
-    param([string]$Resource, [string]$Name)
-    # Convert "myapp" + "api-key" -> "MYAPP_API_KEY"
-    $combined = "$Resource`_$Name"
-    return $combined.ToUpper() -replace '-', '_'
 }
 
 function Read-SecureValue {
@@ -159,28 +140,10 @@ Write-Success "Logged in as: $($account.user.name)"
 
 # Load configuration
 $settings = Get-Settings
-$resourcesConfig = Get-ResourcesConfig
 
 # Build the full secret name
 $secretName = "$Resource-$Name"
 Write-Info "Secret name in vault: $secretName"
-
-# Generate or validate environment variable name
-if ([string]::IsNullOrWhiteSpace($EnvVarName)) {
-    $EnvVarName = ConvertTo-EnvVarName -Resource $Resource -Name $Name
-}
-
-# Validate environment variable name to prevent command injection
-# Only allow alphanumerics and underscores, must start with letter or underscore
-if ($EnvVarName -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
-    Write-Host "`n[ERROR] Invalid environment variable name: '$EnvVarName'" -ForegroundColor Red
-    Write-Host "  Environment variable names must:" -ForegroundColor Yellow
-    Write-Host "    - Start with a letter or underscore"
-    Write-Host "    - Contain only letters, numbers, and underscores"
-    Write-Host "`n"
-    exit 1
-}
-
 Write-Info "Environment variable: $EnvVarName"
 
 # Get the secret value
@@ -194,14 +157,15 @@ if ([string]::IsNullOrWhiteSpace($Value)) {
     }
 }
 
-# Save to KeyVault
+# Save to KeyVault with resource and env-var-name tags
 Write-Step "Saving secret to KeyVault '$($settings.vaultName)'..."
 
 try {
     az keyvault secret set `
         --vault-name $settings.vaultName `
         --name $secretName `
-        --value $Value | Out-Null
+        --value $Value `
+        --tags "resource=$Resource" "env-var-name=$EnvVarName" | Out-Null
     
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to save secret to KeyVault"
@@ -214,28 +178,6 @@ try {
     Write-Host "   Run ./setup.ps1 to verify." -ForegroundColor DarkGray
     exit 1
 }
-
-# Update local config
-Write-Step "Updating local configuration..."
-
-# Ensure resource exists in config
-if (-not $resourcesConfig.resources.PSObject.Properties[$Resource]) {
-    $resourcesConfig.resources | Add-Member -NotePropertyName $Resource -NotePropertyValue ([PSCustomObject]@{
-        description = ""
-        secrets = [PSCustomObject]@{}
-    }) -Force
-}
-
-# Ensure secrets object exists
-if (-not $resourcesConfig.resources.$Resource.PSObject.Properties["secrets"]) {
-    $resourcesConfig.resources.$Resource | Add-Member -NotePropertyName "secrets" -NotePropertyValue ([PSCustomObject]@{}) -Force
-}
-
-# Add/update the secret mapping
-$resourcesConfig.resources.$Resource.secrets | Add-Member -NotePropertyName $secretName -NotePropertyValue $EnvVarName -Force
-
-Save-ResourcesConfig -Config $resourcesConfig
-Write-Success "Updated resources.json"
 
 # Summary
 Write-Host "`n+==============================================================+" -ForegroundColor Green
