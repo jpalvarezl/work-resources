@@ -218,7 +218,7 @@ foreach ($secret in $secretsToMigrate) {
         $envVarName = if ([string]::IsNullOrWhiteSpace($input)) { $suggestedEnv } else { $input }
         
         # Validate the env var name
-        if ($envVarName -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+        if ($envVarName -notmatch $script:EnvVarNamePattern) {
             Write-Err "Invalid env var name: '$envVarName' - skipping"
             $skippedCount++
             continue
@@ -246,7 +246,7 @@ foreach ($secret in $secretsToMigrate) {
         $resource = if ([string]::IsNullOrWhiteSpace($input)) { $suggestedRes } else { $input }
         
         # Validate the resource name
-        if ($resource -notmatch '^[a-zA-Z][a-zA-Z0-9-]*$') {
+        if ($resource -notmatch $script:ResourceNamePattern) {
             Write-Err "Invalid resource name: '$resource' - skipping"
             $skippedCount++
             continue

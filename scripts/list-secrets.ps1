@@ -146,7 +146,7 @@ foreach ($resName in ($secretsByResource.Keys | Sort-Object)) {
 
 # Summary
 Write-Host "`n-----------------------------------------" -ForegroundColor DarkGray
-Write-Host "Total: $totalSecrets secret(s) in $($secretsByResource.Keys.Count) resource group(s)" -ForegroundColor DarkGray
+Write-Host "Total: $totalSecrets secret(s) in $($secretsByResource.Keys.Count) resource(s)" -ForegroundColor DarkGray
 
 if ($missingTagCount -gt 0) {
     Write-Host "  [!] $missingTagCount secret(s) missing 'env-var-name' tag" -ForegroundColor Yellow

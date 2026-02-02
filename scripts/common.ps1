@@ -1,6 +1,10 @@
 # Shared helper functions for KeyVault scripts
 # This file is dot-sourced by other scripts
 
+# Validation patterns - used across multiple scripts
+$script:ResourceNamePattern = '^[a-zA-Z][a-zA-Z0-9-]*$'
+$script:EnvVarNamePattern = '^[A-Za-z_][A-Za-z0-9_]*$'
+
 function Get-ProjectRoot {
     <#
     .SYNOPSIS
