@@ -197,22 +197,6 @@ function Install-Files {
         }
     }
     
-    # Handle resources.json - create empty if not exists (will be populated by wr-setup)
-    $destResourcesJson = Join-Path $ConfigDir "resources.json"
-    
-    if (-not (Test-Path $destResourcesJson)) {
-        # Create empty resources.json - user will run wr-setup to sync from KeyVault
-        $initialConfig = @{
-            "`$schema" = "https://json-schema.org/draft/2020-12/schema"
-            "`$comment" = "Auto-generated from KeyVault. Run wr-setup to sync secrets."
-            resources = @{}
-        } | ConvertTo-Json -Depth 10
-        Set-Content $destResourcesJson -Value $initialConfig -Encoding UTF8
-        Write-Success "Created empty resources.json (run wr-setup to sync from KeyVault)"
-    } else {
-        Write-Info "Kept existing resources.json"
-    }
-    
     # Copy .env.template
     $envTemplate = Join-Path $SourceRoot ".env.template"
     if (Test-Path $envTemplate) {
@@ -515,8 +499,8 @@ if (-not $Uninstall) {
     
     Write-Host "`nNext steps:" -ForegroundColor Yellow
     Write-Host "  1. Restart your shell (or source your profile)"
-    Write-Host "  2. Verify and update your .env file (see .env.template): $ConfigDir/.env"
-    Write-Host "  3. Run: wr-setup"
+    Write-Host "  2. Verify your .env file: $ConfigDir/.env"
+    Write-Host "  3. Run wr-setup (only needed for first-time vault creation)"
 }
 
 Write-Host ""

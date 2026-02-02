@@ -225,7 +225,7 @@ if ($loadedSecrets.Count -eq 0) {
     Write-Stderr "`n[ERROR] No secrets were loaded."
     if ($missingTagSecrets.Count -gt 0) {
         Write-Stderr "  $($missingTagSecrets.Count) secret(s) are missing the 'env-var-name' tag."
-        Write-Stderr "  Run: wr-migrate to add tags to existing secrets."
+        Write-Stderr "  Run: ./scripts/migrate-secrets.ps1 to add tags."
     }
     exit 1
 }

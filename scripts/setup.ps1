@@ -281,7 +281,7 @@ if ($LASTEXITCODE -eq 0) {
         
         if ($secretsWithoutTag -gt 0) {
             Write-Warn "$secretsWithoutTag secret(s) missing 'env-var-name' tag"
-            Write-Host "      Run: wr-migrate to add tags to existing secrets" -ForegroundColor DarkGray
+            Write-Host "      Run: ./scripts/migrate-secrets.ps1 to add tags" -ForegroundColor DarkGray
         } else {
             Write-Success "All secrets have 'env-var-name' tags"
         }
