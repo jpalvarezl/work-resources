@@ -150,7 +150,7 @@ Write-Host "Total: $totalSecrets secret(s) in $($secretsByResource.Keys.Count) r
 
 if ($missingTagCount -gt 0) {
     Write-Host "  [!] $missingTagCount secret(s) missing 'env-var-name' tag" -ForegroundColor Yellow
-    Write-Host "      Run: ./scripts/migrate-secrets.ps1 to add tags" -ForegroundColor DarkGray
+    Write-Host "      Run: wr-migrate to add tags" -ForegroundColor DarkGray
 }
 
 Write-Host ""

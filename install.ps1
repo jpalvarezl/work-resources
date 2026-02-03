@@ -247,7 +247,7 @@ function Uninstall-Files {
     
     # On Linux/macOS, remove symlinks from ~/.local/bin
     if (-not $IsWindowsOS) {
-        $commands = @("wr-load", "wr-save", "wr-delete", "wr-list", "wr-clear", "wr-setup")
+        $commands = @("wr-load", "wr-save", "wr-update", "wr-delete", "wr-list", "wr-clear", "wr-setup")
         $removedAny = $false
         foreach ($cmd in $commands) {
             $linkPath = Join-Path $LocalBin $cmd
@@ -274,6 +274,7 @@ $MarkerStart
 
 function wr-load { & "`$env:WORK_RESOURCES_ROOT/scripts/load-env.ps1" @args }
 function wr-save { & "`$env:WORK_RESOURCES_ROOT/scripts/save-secret.ps1" @args }
+function wr-update { & "`$env:WORK_RESOURCES_ROOT/scripts/update-secret.ps1" @args }
 function wr-delete { & "`$env:WORK_RESOURCES_ROOT/scripts/delete-secret.ps1" @args }
 function wr-list { & "`$env:WORK_RESOURCES_ROOT/scripts/list-secrets.ps1" @args }
 function wr-clear { & "`$env:WORK_RESOURCES_ROOT/scripts/clear-env.ps1" @args }
@@ -296,6 +297,11 @@ wr-load() {
     eval "`$(pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/load-env.ps1" -Export bash "`$@")"
 }
 
+# wr-update must be a function to set env vars in current shell
+wr-update() {
+    eval "`$(pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/update-secret.ps1" -Export bash "`$@")"
+}
+
 # wr-clear must be a function to unset env vars in current shell
 wr-clear() {
     eval "`$(pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/clear-env.ps1" -Export bash "`$@")"
@@ -310,7 +316,7 @@ function Get-ZshConfig {
 
 function Get-FishConfig {
     # Note: We don't add ~/.local/bin to PATH for fish because the functions below
-    # handle wr-load and wr-clear (which need to run in-process to set env vars).
+    # handle wr-load, wr-update and wr-clear (which need to run in-process to set env vars).
     # Other commands (wr-save, wr-list, etc.) are wrapped as functions too for consistency.
     
     return @"
@@ -321,6 +327,11 @@ set -gx WORK_RESOURCES_ROOT "$InstallRoot"
 # wr-load must be a function to set env vars in current shell
 function wr-load
     eval (pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/load-env.ps1" -Export fish `$argv)
+end
+
+# wr-update must be a function to set env vars in current shell
+function wr-update
+    eval (pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/update-secret.ps1" -Export fish `$argv)
 end
 
 # wr-clear must be a function to unset env vars in current shell
@@ -372,7 +383,7 @@ if ($Uninstall) {
         if (-not (Test-Path $LocalBin)) {
             New-Item -ItemType Directory -Path $LocalBin -Force | Out-Null
         }
-        $commands = @("wr-load", "wr-save", "wr-delete", "wr-list", "wr-clear", "wr-setup")
+        $commands = @("wr-load", "wr-save", "wr-update", "wr-delete", "wr-list", "wr-clear", "wr-setup")
         foreach ($cmd in $commands) {
             $linkPath = Join-Path $LocalBin $cmd
             $targetPath = Join-Path $BinDir $cmd
@@ -491,7 +502,8 @@ if (-not $Uninstall) {
     
     Write-Host "`nAvailable commands:" -ForegroundColor Cyan
     Write-Host "  wr-load     Load secrets into environment"
-    Write-Host "  wr-save     Save a secret to KeyVault"
+    Write-Host "  wr-save     Save a new secret to KeyVault"
+    Write-Host "  wr-update   Update an existing secret"
     Write-Host "  wr-delete   Delete a secret from KeyVault"
     Write-Host "  wr-list     List configured secrets"
     Write-Host "  wr-clear    Clear secrets from environment"
