@@ -190,6 +190,7 @@ if ([string]::IsNullOrWhiteSpace($EnvVarName)) {
 } else {
     if ($existingEnvVarName -and $EnvVarName -ne $existingEnvVarName) {
         Write-Info "Changing env variable: $existingEnvVarName -> $EnvVarName"
+        $oldEnvVarName = $existingEnvVarName
     } else {
         Write-Info "Environment variable: $EnvVarName"
     }
@@ -238,6 +239,24 @@ if ($Export) {
     # Escape special characters in value
     $escapedValue = $Value -replace "'", "'\''"
     
+    # If env var name changed, unset the old one first
+    if ($oldEnvVarName) {
+        switch ($Export) {
+            "fish" {
+                Write-Output "set -e $oldEnvVarName;"
+            }
+            "bash" {
+                Write-Output "unset $oldEnvVarName;"
+            }
+            "zsh" {
+                Write-Output "unset $oldEnvVarName;"
+            }
+            "powershell" {
+                Write-Output "Remove-Item Env:$oldEnvVarName -ErrorAction SilentlyContinue;"
+            }
+        }
+    }
+    
     switch ($Export) {
         "fish" {
             Write-Output "set -gx $EnvVarName '$escapedValue';"
@@ -253,6 +272,11 @@ if ($Export) {
         }
     }
 } else {
+    # If env var name changed, unset the old one first
+    if ($oldEnvVarName) {
+        [Environment]::SetEnvironmentVariable($oldEnvVarName, $null, "Process")
+    }
+    
     # Set in current PowerShell session
     [Environment]::SetEnvironmentVariable($EnvVarName, $Value, "Process")
     
