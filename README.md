@@ -160,7 +160,8 @@ After installation, these commands are available from any directory:
 | Command | Description |
 |---------|-------------|
 | `wr-setup` | Initial KeyVault setup |
-| `wr-save` | Save a secret to KeyVault |
+| `wr-save` | Save a new secret to KeyVault |
+| `wr-update` | Update an existing secret (value and/or env var name) |
 | `wr-load` | Load secrets into environment |
 | `wr-list` | List secrets in KeyVault |
 | `wr-delete` | Delete a secret from KeyVault |
@@ -194,6 +195,28 @@ wr-save -Resource <name> -Name <secret-name> -EnvVarName <env-var> [-Value <valu
 - Example: `wr-save -Resource myapi -Name api-key -EnvVarName MYAPI_API_KEY`
 - KeyVault secret name: `myapi-api-key`
 - Tag: `env-var-name=MYAPI_API_KEY`
+
+### `wr-update`
+
+Update an existing secret in KeyVault. The `-Name` parameter is the actual KeyVault secret name. The updated value is also set in your current shell session.
+
+```powershell
+wr-update -Resource <resource> -Name <secret-name> [-EnvVarName <env-var>] [-Value <value>]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-Resource` | Yes | The resource tag to filter by (e.g., "azure-agents", "myapp") |
+| `-Name` | Yes | The actual secret name in KeyVault (e.g., "azure-agents-endpoint") |
+| `-EnvVarName` | No | Update the environment variable name tag (keeps existing if omitted) |
+| `-Value` | No | New secret value (prompts if not provided) |
+
+**Examples**:
+```powershell
+wr-update -Resource azure-agents -Name azure-agents-endpoint                  # Prompt for new value
+wr-update -Resource azure-agents -Name azure-agents-endpoint -Value "newval"  # Set value directly
+wr-update -Resource myapp -Name myapp-api-key -EnvVarName "NEW_VAR"           # Also change env var name
+```
 
 ### `wr-load`
 

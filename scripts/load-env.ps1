@@ -225,7 +225,7 @@ if ($loadedSecrets.Count -eq 0) {
     Write-Stderr "`n[ERROR] No secrets were loaded."
     if ($missingTagSecrets.Count -gt 0) {
         Write-Stderr "  $($missingTagSecrets.Count) secret(s) are missing the 'env-var-name' tag."
-        Write-Stderr "  Run: ./scripts/migrate-secrets.ps1 to add tags."
+        Write-Stderr "  Run: wr-migrate to add tags."
     }
     exit 1
 }
@@ -290,5 +290,5 @@ if ($Export) {
         Write-Warn "$($missingTagSecrets.Count) secret(s) missing 'env-var-name' tag - run wr-migrate to fix"
     }
     
-    Write-Host "`nTip: Use ./clear-env.ps1 to remove loaded secrets from session`n" -ForegroundColor DarkGray
+    Write-Host "`nTip: Use wr-clear to remove loaded secrets from session`n" -ForegroundColor DarkGray
 }
