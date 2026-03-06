@@ -201,6 +201,9 @@ Describe "Test-SecretsOfficerRole" {
 
         Mock az { $null } -ParameterFilter { $args[0] -eq "keyvault" -and $args[1] -eq "show" }
 
+        # Probe also fails since vault doesn't exist
+        Mock az { $global:LASTEXITCODE = 1; $null } -ParameterFilter { $args[0] -eq "keyvault" -and $args[1] -eq "secret" -and $args[2] -eq "set" }
+
         $result = Test-SecretsOfficerRole -VaultName "test-vault" -ResourceGroupName "test-rg"
         $result | Should -BeFalse
     }

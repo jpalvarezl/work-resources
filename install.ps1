@@ -309,8 +309,6 @@ wr-clear() {
     eval "`$(pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/clear-env.ps1" -Export bash "`$@")"
 }
 
-# wr-add-user can run directly
-alias wr-add-user='pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/add-user.ps1"'
 $MarkerEnd
 "@
 }
@@ -520,7 +518,9 @@ if (-not $Uninstall) {
     Write-Host "  wr-delete   Delete a secret from KeyVault"
     Write-Host "  wr-list     List configured secrets"
     Write-Host "  wr-clear    Clear secrets from environment"
-    Write-Host "  wr-setup    Initial KeyVault setup"    Write-Host "  wr-add-user  Grant vault access to a teammate"    Write-Host "  wr-migrate  Add tags to secrets missing them"
+    Write-Host "  wr-setup     Initial KeyVault setup"
+    Write-Host "  wr-add-user  Grant vault access to a teammate"
+    Write-Host "  wr-migrate   Add tags to secrets missing them"
     
     Write-Host "`nNext steps:" -ForegroundColor Yellow
     Write-Host "  1. Restart your shell (or source your profile)"
