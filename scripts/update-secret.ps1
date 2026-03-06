@@ -153,6 +153,9 @@ Write-Success "Logged in as: $($account.user.name)"
 # Load configuration
 $settings = Get-Settings
 
+# Verify write access
+Assert-SecretsOfficerRole -VaultName $settings.vaultName -ResourceGroupName $settings.resourceGroupName
+
 # Use the Name parameter directly as the secret name (no concatenation)
 $secretName = $Name
 Write-Info "Secret name in vault: $secretName"

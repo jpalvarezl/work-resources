@@ -140,6 +140,9 @@ Write-Success "Logged in as: $($account.user.name)"
 # Load configuration
 $settings = Get-Settings
 
+# Verify write access
+Assert-SecretsOfficerRole -VaultName $settings.vaultName -ResourceGroupName $settings.resourceGroupName
+
 # Build list of secrets to delete
 $secretsToDelete = @()
 

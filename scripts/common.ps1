@@ -99,3 +99,63 @@ function Get-EnvSettings {
     # Return as PSCustomObject for consistency with previous JSON approach
     return [PSCustomObject]$settings
 }
+
+function Test-SecretsOfficerRole {
+    <#
+    .SYNOPSIS
+        Checks if the current user has Key Vault Secrets Officer role on the vault.
+    .DESCRIPTION
+        Returns $true if the user has write access (Officer/Administrator), $false otherwise.
+        Used by write commands to provide clear errors for read-only users.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$VaultName,
+        [Parameter(Mandatory)]
+        [string]$ResourceGroupName
+    )
+
+    $account = az account show 2>$null | ConvertFrom-Json
+    if (-not $account) {
+        return $false
+    }
+
+    $vaultId = az keyvault show --name $VaultName --resource-group $ResourceGroupName --query "id" -o tsv 2>$null
+    if ([string]::IsNullOrWhiteSpace($vaultId)) {
+        return $false
+    }
+
+    $assignee = $account.user.name
+    $roles = az role assignment list --assignee $assignee --scope $vaultId --query "[].roleDefinitionName" -o json 2>$null | ConvertFrom-Json
+
+    if ($roles -contains "Key Vault Secrets Officer" -or $roles -contains "Key Vault Administrator") {
+        return $true
+    }
+    return $false
+}
+
+function Assert-SecretsOfficerRole {
+    <#
+    .SYNOPSIS
+        Asserts that the current user has write access to the vault. Exits with error if not.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$VaultName,
+        [Parameter(Mandatory)]
+        [string]$ResourceGroupName
+    )
+
+    if (-not (Test-SecretsOfficerRole -VaultName $VaultName -ResourceGroupName $ResourceGroupName)) {
+        Write-Host "`n[ERROR] You don't have write access to vault '$VaultName'." -ForegroundColor Red
+        Write-Host "   Your role is 'Key Vault Secrets User' (read-only)." -ForegroundColor Yellow
+        Write-Host "" -ForegroundColor Yellow
+        Write-Host "   To modify secrets, ask a vault admin to grant you the Officer role:" -ForegroundColor Yellow
+        Write-Host "   wr-add-user -Email your@email.com -Role Admin" -ForegroundColor Cyan
+        Write-Host "" -ForegroundColor Yellow
+        Write-Host "   Or re-run setup with the Admin role:" -ForegroundColor Yellow
+        Write-Host "   wr-setup -Role Admin" -ForegroundColor Cyan
+        Write-Host ""
+        exit 1
+    }
+}
