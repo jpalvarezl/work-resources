@@ -247,7 +247,7 @@ function Uninstall-Files {
     
     # On Linux/macOS, remove symlinks from ~/.local/bin
     if (-not $IsWindowsOS) {
-        $commands = @("wr-load", "wr-save", "wr-update", "wr-delete", "wr-list", "wr-clear", "wr-setup", "wr-migrate")
+        $commands = @("wr-load", "wr-save", "wr-update", "wr-delete", "wr-list", "wr-clear", "wr-setup", "wr-add-user", "wr-migrate")
         $removedAny = $false
         foreach ($cmd in $commands) {
             $linkPath = Join-Path $LocalBin $cmd
@@ -279,6 +279,7 @@ function wr-delete { & "`$env:WORK_RESOURCES_ROOT/scripts/delete-secret.ps1" @ar
 function wr-list { & "`$env:WORK_RESOURCES_ROOT/scripts/list-secrets.ps1" @args }
 function wr-clear { & "`$env:WORK_RESOURCES_ROOT/scripts/clear-env.ps1" @args }
 function wr-setup { & "`$env:WORK_RESOURCES_ROOT/scripts/setup.ps1" @args }
+function wr-add-user { & "`$env:WORK_RESOURCES_ROOT/scripts/add-user.ps1" @args }
 function wr-migrate { & "`$env:WORK_RESOURCES_ROOT/scripts/migrate-secrets.ps1" @args }
 $MarkerEnd
 "@
@@ -307,6 +308,7 @@ wr-update() {
 wr-clear() {
     eval "`$(pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/clear-env.ps1" -Export bash "`$@")"
 }
+
 $MarkerEnd
 "@
 }
@@ -357,6 +359,10 @@ function wr-setup
     pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/setup.ps1" `$argv
 end
 
+function wr-add-user
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/add-user.ps1" `$argv
+end
+
 function wr-migrate
     pwsh -NoProfile -ExecutionPolicy Bypass -File "`$WORK_RESOURCES_ROOT/scripts/migrate-secrets.ps1" `$argv
 end
@@ -388,7 +394,7 @@ if ($Uninstall) {
         if (-not (Test-Path $LocalBin)) {
             New-Item -ItemType Directory -Path $LocalBin -Force | Out-Null
         }
-        $commands = @("wr-load", "wr-save", "wr-update", "wr-delete", "wr-list", "wr-clear", "wr-setup", "wr-migrate")
+        $commands = @("wr-load", "wr-save", "wr-update", "wr-delete", "wr-list", "wr-clear", "wr-setup", "wr-add-user", "wr-migrate")
         foreach ($cmd in $commands) {
             $linkPath = Join-Path $LocalBin $cmd
             $targetPath = Join-Path $BinDir $cmd
@@ -512,8 +518,9 @@ if (-not $Uninstall) {
     Write-Host "  wr-delete   Delete a secret from KeyVault"
     Write-Host "  wr-list     List configured secrets"
     Write-Host "  wr-clear    Clear secrets from environment"
-    Write-Host "  wr-setup    Initial KeyVault setup"
-    Write-Host "  wr-migrate  Add tags to secrets missing them"
+    Write-Host "  wr-setup     Initial KeyVault setup"
+    Write-Host "  wr-add-user  Grant vault access to a teammate"
+    Write-Host "  wr-migrate   Add tags to secrets missing them"
     
     Write-Host "`nNext steps:" -ForegroundColor Yellow
     Write-Host "  1. Restart your shell (or source your profile)"

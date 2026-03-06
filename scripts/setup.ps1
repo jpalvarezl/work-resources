@@ -11,8 +11,19 @@
     4. Creates the KeyVault if missing (auto-detects location)
     5. Assigns "Key Vault Secrets Officer" role to your user
 
+.PARAMETER Role
+    The RBAC role to assign. Values: Admin, User.
+    - Admin: Assigns 'Key Vault Secrets Officer' (read + write secrets)
+    - User: Assigns 'Key Vault Secrets User' (read-only)
+    Default: Admin when creating a new vault, User when joining an existing vault.
+
 .EXAMPLE
     ./setup.ps1
+    Creates vault (if needed) or joins existing vault with read-only access.
+
+.EXAMPLE
+    ./setup.ps1 -Role Admin
+    Joins existing vault with write access (Officer role).
     
 .EXAMPLE
     ./setup.ps1 -Force
@@ -20,6 +31,9 @@
 #>
 
 param(
+    [ValidateSet("Admin", "User", "")]
+    [string]$Role = "",
+
     [switch]$Force
 )
 
@@ -134,22 +148,20 @@ try {
         $vaultExists = $true
         Write-Success "KeyVault '$($settings.vaultName)' already exists"
         Write-Info "Location: $($vault.location)"
-        
-        if (-not $Force) {
-            Write-Host "`n[SUCCESS] Setup complete! Vault is ready to use." -ForegroundColor Green
-            Write-Host "   Run with -Force to re-apply permissions if needed.`n" -ForegroundColor DarkGray
-        }
     }
 } catch {
     # Vault doesn't exist, will create it
 }
 
+# Determine which RBAC role to assign
+$roleInfo = Get-SetupRole -Role $Role -VaultExists $vaultExists
+$azureRole = $roleInfo.AzureRole
+$roleLabel = $roleInfo.Label
+
 # Step 5: Create resource group and vault if needed
-if (-not $vaultExists -or $Force) {
-    
-    if (-not $vaultExists) {
-        # Auto-detect location from subscription
-        Write-Step "Detecting optimal Azure region..."
+if (-not $vaultExists) {
+    # Auto-detect location from subscription
+    Write-Step "Detecting optimal Azure region..."
         
         # Use single quotes and escape brackets to avoid PowerShell parsing issues
         $jmesQuery = '[?metadata.regionCategory==`Recommended`] | [0].name'
@@ -193,70 +205,70 @@ if (-not $vaultExists -or $Force) {
             Write-Success "KeyVault created successfully"
         }
     }
-    
-    # Assign permissions
-    Write-Step "Configuring access permissions..."
-    
-    $roleAssigned = $false
-    $vaultId = az keyvault show --name $settings.vaultName --resource-group $settings.resourceGroupName --query "id" -o tsv 2>$null
-    
-    if ([string]::IsNullOrWhiteSpace($vaultId)) {
-        Write-Host "`n[ERROR] Could not find KeyVault '$($settings.vaultName)' in resource group '$($settings.resourceGroupName)'" -ForegroundColor Red
-        exit 1
-    }
-    
-    # First, test if we already have access by trying to list secrets
-    Write-Info "Testing vault access..."
-    $testAccess = az keyvault secret list --vault-name $settings.vaultName --query "[].name" -o tsv 2>&1
+
+# Step 6: Assign role (always runs - ensures onboarding into existing vaults works)
+Write-Step "Configuring access permissions..."
+Write-Info "Role: $roleLabel"
+
+$roleAssigned = $false
+$vaultId = az keyvault show --name $settings.vaultName --resource-group $settings.resourceGroupName --query "id" -o tsv 2>$null
+
+if ([string]::IsNullOrWhiteSpace($vaultId)) {
+    Write-Host "`n[ERROR] Could not find KeyVault '$($settings.vaultName)' in resource group '$($settings.resourceGroupName)'" -ForegroundColor Red
+    exit 1
+}
+
+# First, test if we already have access by trying to list secrets
+Write-Info "Testing vault access..."
+$testAccess = az keyvault secret list --vault-name $settings.vaultName --query "[].name" -o tsv 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Write-Success "You already have access to the vault"
+    $roleAssigned = $true
+} else {
+    # Don't have access, try to assign role
+    $assignee = $account.user.name
+    Write-Info "Assignee: $assignee"
+    Write-Info "Vault ID: $vaultId"
+
+    # Try to assign role
+    Write-Info "Attempting to assign '$azureRole' role..."
+    $roleOutput = az role assignment create `
+        --role $azureRole `
+        --assignee $assignee `
+        --scope $vaultId 2>&1
+
     if ($LASTEXITCODE -eq 0) {
-        Write-Success "You already have access to the vault"
+        Write-Success "Assigned '$azureRole' role to your user"
+        Write-Info "Note: Role assignment may take 1-2 minutes to propagate"
         $roleAssigned = $true
     } else {
-        # Don't have access, try to assign role
-        $assignee = $account.user.name
-        Write-Info "Assignee: $assignee"
-        Write-Info "Vault ID: $vaultId"
-        
-        # Try to assign role
-        Write-Info "Attempting to assign 'Key Vault Secrets Officer' role..."
-        $roleOutput = az role assignment create `
-            --role "Key Vault Secrets Officer" `
-            --assignee $assignee `
-            --scope $vaultId 2>&1
-        
-        if ($LASTEXITCODE -eq 0) {
-            Write-Success "Assigned 'Key Vault Secrets Officer' role to your user"
-            Write-Info "Note: Role assignment may take 1-2 minutes to propagate"
-            $roleAssigned = $true
+        # Check if it's a conditional access policy issue
+        if ($roleOutput -match "AADSTS530084|conditional access|token protection") {
+            Write-Warn "Your organization's security policy is blocking role assignment via CLI."
+            Write-Host ""
+            Write-Host "   Please assign the role manually using Azure Portal:" -ForegroundColor Yellow
+            Write-Host "   1. Go to: https://portal.azure.com" -ForegroundColor White
+            Write-Host "   2. Navigate to: KeyVault '$($settings.vaultName)' > Access control (IAM)" -ForegroundColor White
+            Write-Host "   3. Click 'Add role assignment'" -ForegroundColor White
+            Write-Host "   4. Select role: '$azureRole'" -ForegroundColor White
+            Write-Host "   5. Assign to: $assignee" -ForegroundColor White
+            Write-Host ""
+            Write-Host "   Or ask your Azure admin to run:" -ForegroundColor Yellow
+            Write-Host "   az role assignment create --role '$azureRole' --assignee $assignee --scope $vaultId" -ForegroundColor Cyan
         } else {
-            # Check if it's a conditional access policy issue
-            if ($roleOutput -match "AADSTS530084|conditional access|token protection") {
-                Write-Warn "Your organization's security policy is blocking role assignment via CLI."
-                Write-Host ""
-                Write-Host "   Please assign the role manually using Azure Portal:" -ForegroundColor Yellow
-                Write-Host "   1. Go to: https://portal.azure.com" -ForegroundColor White
-                Write-Host "   2. Navigate to: KeyVault '$($settings.vaultName)' > Access control (IAM)" -ForegroundColor White
-                Write-Host "   3. Click 'Add role assignment'" -ForegroundColor White
-                Write-Host "   4. Select role: 'Key Vault Secrets Officer'" -ForegroundColor White
-                Write-Host "   5. Assign to: $assignee" -ForegroundColor White
-                Write-Host ""
-                Write-Host "   Or ask your Azure admin to run:" -ForegroundColor Yellow
-                Write-Host "   az role assignment create --role 'Key Vault Secrets Officer' --assignee $assignee --scope $vaultId" -ForegroundColor Cyan
-            } else {
-                Write-Host "`n[ERROR] Failed to assign role:" -ForegroundColor Red
-                Write-Host $roleOutput -ForegroundColor Red
-            }
+            Write-Host "`n[ERROR] Failed to assign role:" -ForegroundColor Red
+            Write-Host $roleOutput -ForegroundColor Red
         }
-    }
-    
-    if (-not $roleAssigned) {
-        Write-Host "`n[!] Setup partially complete - role assignment pending." -ForegroundColor Yellow
-        Write-Host "   Complete the manual role assignment above, then re-run this script to verify." -ForegroundColor Yellow
-        exit 1
     }
 }
 
-# Step 6: Verify vault access
+if (-not $roleAssigned) {
+    Write-Host "`n[!] Setup partially complete - role assignment pending." -ForegroundColor Yellow
+    Write-Host "   Complete the manual role assignment above, then re-run this script to verify." -ForegroundColor Yellow
+    exit 1
+}
+
+# Step 7: Verify vault access
 Write-Step "Verifying vault access..."
 
 $secretsList = az keyvault secret list --vault-name $settings.vaultName --query "[].name" -o json 2>$null | ConvertFrom-Json
@@ -295,8 +307,20 @@ Write-Host "`n+==============================================================+" 
 Write-Host "|                    Setup Complete!                           |" -ForegroundColor Green
 Write-Host "+==============================================================+" -ForegroundColor Green
 
-Write-Host "`nNext steps:" -ForegroundColor Yellow
-Write-Host "  1. Add a secret:     wr-save -Resource myapp -Name api-key -EnvVarName MYAPP_API_KEY" -ForegroundColor White
-Write-Host "  2. Load secrets:     wr-load -Resource myapp" -ForegroundColor White
-Write-Host "  3. List secrets:     wr-list" -ForegroundColor White
+Write-Host "`nYour role: $roleLabel" -ForegroundColor Cyan
+
+if ($azureRole -eq "Key Vault Secrets Officer") {
+    Write-Host "`nNext steps:" -ForegroundColor Yellow
+    Write-Host "  1. Add a secret:     wr-save -Resource myapp -Name api-key -EnvVarName MYAPP_API_KEY" -ForegroundColor White
+    Write-Host "  2. Load secrets:     wr-load -Resource myapp" -ForegroundColor White
+    Write-Host "  3. List secrets:     wr-list" -ForegroundColor White
+    Write-Host "  4. Add a teammate:   wr-add-user -Email teammate@company.com" -ForegroundColor White
+} else {
+    Write-Host "`nNext steps:" -ForegroundColor Yellow
+    Write-Host "  1. Load secrets:     wr-load -Resource myapp" -ForegroundColor White
+    Write-Host "  2. List secrets:     wr-list" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  Note: You have read-only access. To save/update/delete secrets," -ForegroundColor DarkGray
+    Write-Host "  ask a vault admin to run: wr-add-user -Email you@company.com -Role Admin" -ForegroundColor DarkGray
+}
 Write-Host ""

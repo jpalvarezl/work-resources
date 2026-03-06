@@ -166,15 +166,19 @@ After installation, these commands are available from any directory:
 | `wr-list` | List secrets in KeyVault |
 | `wr-delete` | Delete a secret from KeyVault |
 | `wr-clear` | Clear secrets from environment |
+| `wr-add-user` | Grant vault access to a teammate |
 
 ### `wr-setup`
 
 First-time setup and vault creation.
 
 ```powershell
-wr-setup          # Initial setup
-wr-setup -Force   # Re-apply permissions
+wr-setup                # Create vault (new) or join existing vault (read-only)
+wr-setup -Role Admin    # Join existing vault with write access
+wr-setup -Force         # Re-apply permissions
 ```
+
+When creating a **new** vault, you're automatically assigned the Admin role (Key Vault Secrets Officer). When joining an **existing** vault, you get the User role (Key Vault Secrets User) by default — use `-Role Admin` to request write access.
 
 ### `wr-save`
 
@@ -282,6 +286,40 @@ wr-delete -Resource myapi -All             # Delete all myapi-* secrets
 wr-delete -Resource myapi -All -Force      # No confirmation
 ```
 
+### `wr-add-user`
+
+Grant or remove vault access for a teammate. Only admins (Key Vault Secrets Officer) can run this.
+
+```powershell
+wr-add-user -Email <user-email> [-Role <Admin|User>] [-Remove]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-Email` | Yes | The user's email (Azure AD UPN) |
+| `-Role` | No | `User` (read-only, default) or `Admin` (read + write) |
+| `-Remove` | No | Remove the user's access instead of granting it |
+
+**Examples**:
+```powershell
+wr-add-user -Email teammate@company.com                # Grant read-only access
+wr-add-user -Email teammate@company.com -Role Admin     # Grant full access
+wr-add-user -Email teammate@company.com -Remove         # Revoke access
+```
+
+## RBAC Roles
+
+The tool uses Azure RBAC with two roles:
+
+| Role | Azure Role Name | Can do |
+|------|----------------|--------|
+| **User** | Key Vault Secrets User | `wr-load`, `wr-list`, `wr-clear` |
+| **Admin** | Key Vault Secrets Officer | All commands including `wr-save`, `wr-update`, `wr-delete`, `wr-add-user` |
+
+- **Vault creator** is always assigned Admin automatically
+- **Team members** joining an existing vault get User (read-only) by default
+- Admins can promote others with `wr-add-user -Email user@company.com -Role Admin`
+
 ## Project Structure
 
 ```
@@ -321,8 +359,34 @@ wr-clear
 - **Never commit secrets**: Secret values are stored only in KeyVault, not locally
 - **Use interactive input**: Prefer prompted input over `-Value` parameter to keep secrets out of shell history
 - **Session isolation**: Consider `-SpawnShell` for extra isolation; exit returns to clean session
-- **RBAC permissions**: The setup script uses "Key Vault Secrets Officer" role (least privilege for this use case)
+- **RBAC permissions**: Two roles for least-privilege access:
+  - **Key Vault Secrets User** (read-only) for team members who only need to load secrets
+  - **Key Vault Secrets Officer** (read + write) for admins who manage secrets
+- **Write protection**: `wr-save`, `wr-update`, and `wr-delete` check for Officer role before executing
 - **Tags as metadata**: Environment variable names are stored as tags on the secrets in KeyVault
+
+## Running Tests
+
+The project uses [Pester](https://pester.dev/) (v5+) for unit testing. Tests are in the `tests/` directory.
+
+```powershell
+# Run all tests
+Import-Module Pester -MinimumVersion 5.0 -Force
+Invoke-Pester ./tests
+
+# Run with detailed output
+Invoke-Pester ./tests -Output Detailed
+
+# Run a specific test file
+Invoke-Pester ./tests/common.Tests.ps1
+```
+
+### Prerequisites
+
+- **Pester 5+**: Install or update with:
+  ```powershell
+  Install-Module Pester -MinimumVersion 5.0 -Force -Scope CurrentUser
+  ```
 
 ## Troubleshooting
 
