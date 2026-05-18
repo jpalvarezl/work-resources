@@ -128,16 +128,16 @@ The bootstrap sequence is:
    >>>` block. Subsequent tool calls have two options to consume the
    file:
    - **Auto-loaded by the tool**: some tools support reading `./.env`
-     directly — e.g. `pytest` with the `pytest-dotenv` plugin, Node apps
-     that call `dotenv.config()`, Docker Compose's `env_file:`, the
-     Vercel CLI. Behaviour and prefix requirements vary by tool, so
-     verify the tool's docs rather than assume.
+     natively or via a plugin, but behaviour varies a lot — some load
+     unconditionally, some require a plugin, some need explicit
+     configuration, some don't read it at all. Consult the tool's docs
+     rather than assume.
    - **Manually sourced**: when the tool does not auto-load, prepend
      `set -a; source ./.env; set +a &&` (bash/zsh) to your command.
-     For PowerShell consumers, prefer running `wr-load` directly in the
-     pwsh session — the .env file is in POSIX single-quoted form and a
-     naive trim-quotes parser will mis-decode values that contain a
-     literal single quote.
+     This works universally. For PowerShell consumers, prefer running
+     `wr-load` directly in the pwsh session — the .env file is in POSIX
+     single-quoted form and a naive trim-quotes parser will mis-decode
+     values that contain a literal single quote.
 
    `wr-clear` removes the fenced block (even from a fresh shell where
    the in-process env vars from a previous `wr-load` have already

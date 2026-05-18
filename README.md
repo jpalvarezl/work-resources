@@ -308,12 +308,12 @@ literal single quote, so use the `bash`/`zsh` snippet above when possible,
 or run `wr-load` directly in your pwsh session — it sets the env vars
 in-process so no separate source step is needed.
 
-Some tools support auto-loading `./.env` via a plugin or built-in
-mechanism — e.g. `pytest` with the `pytest-dotenv` plugin, Node apps
-that explicitly call `dotenv.config()`, Docker Compose's `env_file:`,
-the Vercel CLI, etc. Behaviour varies (some load `.env` unconditionally,
-others only with specific filename prefixes or after explicit
-configuration), so verify your tool's docs rather than assume.
+Some tools support auto-loading `./.env` natively or via a plugin, but
+behaviour varies a lot — some load it unconditionally, some only with a
+specific filename or prefix, some require explicit configuration, and
+some don't read `.env` at all. **Consult your tool's docs rather than
+assuming.** When in doubt, the explicit `set -a; source ./.env; set +a`
+form above works universally for any process you launch from bash/zsh.
 
 > **Security**: secrets are now on disk as plaintext. Ensure `./.env` is
 > gitignored (most projects' `.gitignore` covers `.env` by default — verify
