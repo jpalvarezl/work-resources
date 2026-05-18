@@ -124,17 +124,35 @@ The bootstrap sequence is:
    combination per session**, then reuse the populated env vars in subsequent
    commands. Do not call `wr-load` again for values you already have in this
    shell.
-2. **Always pass `-Value` to `wr-save` and `wr-update`.** Both prompt
+2. **Load the narrowest set you actually need.** Each per-secret round-trip to
+   KeyVault is non-trivial — a full-flavor load can take seconds to minutes
+   depending on size, and loading an entire vault is wasteful. Prefer the most
+   specific filter you can justify, in this order:
+   - **Single secret known**: `wr-load -Resource R -Flavor F -Name N` (one
+     `show` call). Use this whenever the agent already knows which secret it
+     needs.
+   - **Single flavor of a resource**: `wr-load -Resource R -Flavor F` (the
+     normal "set up one language SDK" case).
+   - **Whole resource**: `wr-load -Resource R` (only when you genuinely need
+     every flavor and every secret — most agent tasks do not).
+   - **Whole vault**: `wr-load` with no filters. **Avoid in agent
+     workflows.** This is intended for human exploration, not automation;
+     it triggers a `show` call for every secret in the vault.
+
+   If the user's intent is ambiguous, call `wr-list -Resource R [-Flavor F]`
+   first (cheap — one `list` call, no per-secret `show`s) to discover the
+   secret name, then load surgically with `-Name`.
+3. **Always pass `-Value` to `wr-save` and `wr-update`.** Both prompt
    interactively when `-Value` is omitted; that will hang an agent session.
-3. **Always pass `-Force` to destructive commands** (`wr-clear`, `wr-delete`)
+4. **Always pass `-Force` to destructive commands** (`wr-clear`, `wr-delete`)
    to skip the confirmation prompt.
-4. **Disambiguate with `-Flavor` when multiple flavors exist for the same env
+5. **Disambiguate with `-Flavor` when multiple flavors exist for the same env
    var name.** If `wr-load -Resource X` (no `-Flavor`) selects more than one
    secret mapping to the same env-var, the tool warns and the last-loaded
    value wins — pick a specific `-Flavor` instead.
-5. **Use `wr-list` before destructive operations** to verify what will be
+6. **Use `wr-list` before destructive operations** to verify what will be
    affected. Especially before `wr-delete -All`.
-6. **Do not invent secret names.** Inspect with `wr-list` first; secret names
+7. **Do not invent secret names.** Inspect with `wr-list` first; secret names
    in KeyVault follow `{resource}-{name}` or `{resource}-{flavor}-{name}`.
 
 ## Conventions
@@ -379,7 +397,7 @@ wr-add-user -Email teammate@company.com -Role Admin    # writer
 2. **Detect Azure auth.** If a command fails because the user is not logged in, instruct them to run `az login` once; do not retry in a loop.
 3. **Reach for `wr-list` first** when the user's request lacks a specific resource/flavor/name. Show them the inventory, then ask which slice they want.
 4. **Choose the right command** for the user's intent:
-   - read values into the shell → `wr-load`
+   - read values into the shell → `wr-load` (apply the narrowest filter you can — see Rule #2)
    - inspect what's stored → `wr-list`
    - add a new secret → `wr-save`
    - rotate an existing value → `wr-update`
