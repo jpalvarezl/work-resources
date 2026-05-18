@@ -419,6 +419,38 @@ Describe "Test-SecretTagsMatchFilter" {
     }
 }
 
+Describe "Resolve-NameFilter" {
+    Context "when -Name is empty / null" {
+        It "returns null with no filters" {
+            Resolve-NameFilter -Name "" -ResourceFilters @() -FlavorFilters @() | Should -BeNullOrEmpty
+        }
+        It "returns null even when Resource and Flavor are supplied" {
+            Resolve-NameFilter -Name "" -ResourceFilters @("r") -FlavorFilters @("py") | Should -BeNullOrEmpty
+        }
+        It "returns null for whitespace-only Name" {
+            Resolve-NameFilter -Name "   " -ResourceFilters @("r") | Should -BeNullOrEmpty
+        }
+    }
+
+    Context "when -Name is set" {
+        It "composes {Resource}-{Name} when no flavor supplied" {
+            Resolve-NameFilter -Name "endpoint" -ResourceFilters @("myapi") | Should -Be "myapi-endpoint"
+        }
+        It "composes {Resource}-{Flavor}-{Name} when single flavor supplied" {
+            Resolve-NameFilter -Name "endpoint" -ResourceFilters @("myapi") -FlavorFilters @("py") | Should -Be "myapi-py-endpoint"
+        }
+        It "throws when no Resource is supplied" {
+            { Resolve-NameFilter -Name "endpoint" -ResourceFilters @() -FlavorFilters @() } | Should -Throw "*requires -Resource*"
+        }
+        It "throws when multiple Resources are supplied" {
+            { Resolve-NameFilter -Name "endpoint" -ResourceFilters @("r1","r2") } | Should -Throw "*single -Resource*"
+        }
+        It "throws when multiple Flavors are supplied" {
+            { Resolve-NameFilter -Name "endpoint" -ResourceFilters @("r") -FlavorFilters @("py","js") } | Should -Throw "*at most one -Flavor*"
+        }
+    }
+}
+
 Describe "Test-SecretsOfficerRole" {
     BeforeAll {
         # Mock az CLI calls to avoid real Azure interactions

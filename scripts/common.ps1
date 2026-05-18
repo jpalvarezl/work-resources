@@ -60,6 +60,52 @@ function Test-SecretTagsMatchFilter {
     return $true
 }
 
+function Resolve-NameFilter {
+    <#
+    .SYNOPSIS
+        Validates `-Name` filter constraints and returns the composed KV secret name to match.
+    .DESCRIPTION
+        Used by wr-load / wr-list / wr-clear when narrowing to a single secret.
+
+        Rules:
+        - If no `-Name` was supplied, returns $null (caller skips name filtering).
+        - `-Name` requires `-Resource`. Multi-resource and multi-flavor filters are
+          rejected because the composed name match would otherwise be ambiguous.
+
+        Returns the exact KV secret name a candidate must equal:
+        - `{Resource}-{Name}`           when no flavor was supplied
+        - `{Resource}-{Flavor}-{Name}`  when a flavor was supplied
+    #>
+    param(
+        [AllowEmptyString()]
+        [string]$Name,
+
+        [string[]]$ResourceFilters = @(),
+
+        [string[]]$FlavorFilters = @()
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Name)) {
+        return $null
+    }
+
+    if ($ResourceFilters.Count -eq 0) {
+        throw "-Name requires -Resource so the composed secret name is unambiguous."
+    }
+    if ($ResourceFilters.Count -gt 1) {
+        throw "-Name requires a single -Resource (got: $($ResourceFilters -join ', '))."
+    }
+    if ($FlavorFilters.Count -gt 1) {
+        throw "-Name requires at most one -Flavor (got: $($FlavorFilters -join ', '))."
+    }
+
+    $resourceName = $ResourceFilters[0]
+    if ($FlavorFilters.Count -eq 1) {
+        return "$resourceName-$($FlavorFilters[0])-$Name"
+    }
+    return "$resourceName-$Name"
+}
+
 function ConvertTo-ShellEscapedSingleQuoted {
     <#
     .SYNOPSIS

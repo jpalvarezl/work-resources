@@ -167,6 +167,15 @@ Example: `wr-save -Resource foundry-sdk-deployment -Flavor py -Name foundry-proj
 → KV secret `foundry-sdk-deployment-py-foundry-project-endpoint` with tags
 `resource=foundry-sdk-deployment, flavor=py, env-var-name=FOUNDRY_PROJECT_ENDPOINT`.
 
+`wr-load`, `wr-list`, and `wr-clear` also accept `-Name` to narrow to a single
+secret using the same composition. `-Name` requires `-Resource` (and accepts
+at most one `-Flavor`) so the composed match is unambiguous. Example:
+
+```powershell
+wr-load -Resource foundry-sdk-deployment -Flavor py -Name foundry-project-endpoint
+# Loads exactly foundry-sdk-deployment-py-foundry-project-endpoint into the session.
+```
+
 ### Filename → flavor convention (for `.azure/<deployment>/...` style folders)
 
 | File           | Flavor      |
@@ -230,13 +239,14 @@ wr-load -Resource <r>                           # Filter by resource
 wr-load -Resource "r1,r2"                       # Multiple resources
 wr-load -Resource <r> -Flavor <f>               # Resource + flavor (recommended for flavored vaults)
 wr-load -Resource <r> -Flavor "py,js"           # Multiple flavors
+wr-load -Resource <r> -Flavor <f> -Name <n>     # Single secret: matches {r}-{f}-{n}
 wr-load -Resource <r> -Export bash              # Print export commands instead of mutating session
 wr-load -Resource <r> -SpawnShell               # Spawn a child shell with env vars set
 ```
 
 When the matched set contains multiple secrets sharing the same
 `env-var-name`, `wr-load` prints a collision warning and last-loaded wins.
-Resolve by adding `-Flavor`.
+Resolve by adding `-Flavor` (or `-Name` for the most surgical case).
 
 ### `wr-list`
 Inspect the vault. Groups output by resource, then by flavor when flavors
@@ -247,6 +257,7 @@ wr-list                                                 # All secrets
 wr-list -Resource <r>                                   # Filter by resource
 wr-list -Resource "r1,r2"                               # Multiple resources
 wr-list -Resource <r> -Flavor <f>                       # Resource + flavor
+wr-list -Resource <r> -Flavor <f> -Name <n>             # Single secret: matches {r}-{f}-{n}
 ```
 
 Read-only; does not require Officer role.
@@ -260,6 +271,7 @@ each var (the OS does not retain that provenance).
 wr-clear -Force                                 # Clear everything wr-load could set
 wr-clear -Resource <r> -Force
 wr-clear -Resource <r> -Flavor <f> -Force
+wr-clear -Resource <r> -Flavor <f> -Name <n> -Force   # Single env var (the one {r}-{f}-{n} maps to)
 ```
 
 ### `wr-delete`

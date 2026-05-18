@@ -40,6 +40,11 @@
     Clears only env vars whose secrets are tagged resource='foundry-sdk-deployment' AND flavor='py'.
 
 .EXAMPLE
+    ./clear-env.ps1 -Resource foundry-sdk-deployment -Flavor py -Name foundry-project-endpoint -Force
+    Clears exactly the env var that the single secret
+    'foundry-sdk-deployment-py-foundry-project-endpoint' maps to.
+
+.EXAMPLE
     ./clear-env.ps1 -Force
     Clears all secrets without confirmation prompt.
 #>
@@ -47,6 +52,8 @@
 param(
     [string]$Resource,
     [string]$Flavor,
+    [ValidatePattern('^[a-zA-Z][a-zA-Z0-9-]*$')]
+    [string]$Name,
     [switch]$Force,
     [ValidateSet("fish", "bash", "zsh", "powershell", "")]
     [string]$Export = ""
@@ -89,6 +96,18 @@ if (-not $SilentMode) {
     Write-Host "`n[CLEAR] Clear Environment Variables" -ForegroundColor Magenta
 }
 
+# Parse and validate -Name / -Resource / -Flavor BEFORE any network call so
+# misuse fails fast without authenticating to Azure.
+$resourceFilters = @()
+if (-not [string]::IsNullOrWhiteSpace($Resource)) {
+    $resourceFilters = @($Resource -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+$flavorFilters = @()
+if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
+    $flavorFilters = @($Flavor -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+$nameFilter = Resolve-NameFilter -Name $Name -ResourceFilters $resourceFilters -FlavorFilters $flavorFilters
+
 # Load configuration
 $settings = Get-Settings
 
@@ -108,18 +127,15 @@ if ($null -eq $secretsList -or $secretsList.Count -eq 0) {
     exit 0
 }
 
-# Filter by resource and flavor tags via shared helper
-$resourceFilters = @()
-if (-not [string]::IsNullOrWhiteSpace($Resource)) {
-    $resourceFilters = @($Resource -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-}
-$flavorFilters = @()
-if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
-    $flavorFilters = @($Flavor -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-}
-
+# Apply filters via the shared helper, plus exact-name match when -Name was supplied
 $secretsList = $secretsList | Where-Object {
-    Test-SecretTagsMatchFilter -Tags $_.tags -ResourceFilters $resourceFilters -FlavorFilters $flavorFilters
+    if (-not (Test-SecretTagsMatchFilter -Tags $_.tags -ResourceFilters $resourceFilters -FlavorFilters $flavorFilters)) {
+        return $false
+    }
+    if ($nameFilter -and $_.name -ne $nameFilter) {
+        return $false
+    }
+    return $true
 }
 
 if ($null -eq $secretsList -or @($secretsList).Count -eq 0) {
@@ -127,6 +143,7 @@ if ($null -eq $secretsList -or @($secretsList).Count -eq 0) {
         $filterDesc = @()
         if ($resourceFilters.Count -gt 0) { $filterDesc += "resource=$($resourceFilters -join ',')" }
         if ($flavorFilters.Count -gt 0)   { $filterDesc += "flavor=$($flavorFilters -join ',')" }
+        if ($nameFilter)                  { $filterDesc += "name=$nameFilter" }
         $filterText = if ($filterDesc.Count -gt 0) { " matching $($filterDesc -join ' AND ')" } else { "" }
         Write-Host "`n  No secrets found$filterText." -ForegroundColor Red
     }
