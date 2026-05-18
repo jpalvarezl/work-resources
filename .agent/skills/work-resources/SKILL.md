@@ -127,14 +127,24 @@ The bootstrap sequence is:
    the current working directory) inside a fenced `# >>> work-resources
    >>>` block. Subsequent tool calls have two options to consume the
    file:
-   - **Auto-loaded by the tool**: `pytest`, `vitest`, node `dotenv`,
-     Vercel CLI, Docker Compose, etc. read `./.env` automatically.
-   - **Manually sourced**: prepend the appropriate one-liner to your
-     command, e.g. `set -a; source ./.env; set +a && pytest` (bash/zsh).
+   - **Auto-loaded by the tool**: some tools support reading `./.env`
+     directly — e.g. `pytest` with the `pytest-dotenv` plugin, Node apps
+     that call `dotenv.config()`, Docker Compose's `env_file:`, the
+     Vercel CLI. Behaviour and prefix requirements vary by tool, so
+     verify the tool's docs rather than assume.
+   - **Manually sourced**: when the tool does not auto-load, prepend
+     `set -a; source ./.env; set +a &&` (bash/zsh) to your command.
+     For PowerShell consumers, prefer running `wr-load` directly in the
+     pwsh session — the .env file is in POSIX single-quoted form and a
+     naive trim-quotes parser will mis-decode values that contain a
+     literal single quote.
 
-   `wr-clear` removes the fenced block. User-authored content in
-   `./.env` (outside the fences) is always preserved by both commands.
-   Pass `-NoEnvFile` to either to opt out of the file write/removal.
+   `wr-clear` removes the fenced block (even from a fresh shell where
+   the in-process env vars from a previous `wr-load` have already
+   disappeared) and is therefore the safe way to reset both the file
+   and the in-process state. User-authored content in `./.env` (outside
+   the fences) is always preserved by both commands. Pass `-NoEnvFile`
+   to either to opt out of the file write/removal.
 2. **Minimise `wr-load` calls.** `wr-load` does N+1 network calls to KeyVault
    (one list + one show per secret). Call it at most **once per resource/flavor
    combination per session**, then reuse the populated env vars — and the
@@ -393,10 +403,10 @@ agent task:
 # Tool call #1 (fresh pwsh): seed the values, populating ./.env
 wr-load -Resource myapi -Flavor py
 
-# Tool call #2 (fresh bash): tools that auto-load .env need no further setup
-pytest                              # pytest reads ./.env on startup
+# Tool call #2 (fresh bash): tools that don't auto-load .env need to source it
+set -a; source ./.env; set +a && pytest                # works for any test runner
 
-# Tool call #3 (fresh bash): tools that DON'T auto-load .env — source it first
+# Tool call #3 (fresh bash): same pattern for any other tool
 set -a; source ./.env; set +a && curl -H "Authorization: Bearer $MYAPI_API_KEY" https://...
 ```
 

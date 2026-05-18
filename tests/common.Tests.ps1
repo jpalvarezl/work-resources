@@ -574,6 +574,30 @@ Describe "Write-EnvFileBlock and Remove-EnvFileBlock" {
             $removed | Should -BeTrue
             Test-Path $envFile | Should -BeFalse
         }
+
+        It "preserves deliberate multi-line whitespace in user content outside the fences (regression: no file-wide collapse)" {
+            # User content with three blank lines between sections is a
+            # legitimate stylistic choice. Remove-EnvFileBlock must NOT
+            # collapse it as a side effect of removing the wr block.
+            $userContent = "SECTION_ONE=foo`n`n`n`nSECTION_TWO=bar`n"
+            Set-Content -Path $envFile -Value $userContent -NoNewline -Encoding utf8NoBOM
+            Write-EnvFileBlock -Path $envFile -Values @{ TMP = 'gone' }
+            Remove-EnvFileBlock -Path $envFile | Should -BeTrue
+
+            $content = Get-Content $envFile -Raw
+            # The original "`n`n`n`n" between SECTION_ONE and SECTION_TWO must survive.
+            $content | Should -Match "SECTION_ONE=foo`r?`n`r?`n`r?`n`r?`nSECTION_TWO=bar"
+        }
+    }
+
+    Context "encoding" {
+        It "writes UTF-8 without BOM (regression: BOM breaks dotenv parsers)" {
+            Write-EnvFileBlock -Path $envFile -Values @{ FOO = 'bar' }
+            $bytes = [System.IO.File]::ReadAllBytes($envFile)
+            # UTF-8 BOM = EF BB BF
+            $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+            $hasBom | Should -BeFalse
+        }
     }
 }
 

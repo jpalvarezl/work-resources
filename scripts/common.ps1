@@ -199,7 +199,11 @@ function Write-EnvFileBlock {
             New-Item -ItemType Directory -Path $parent -Force | Out-Null
         }
         # End with a trailing newline so editors / loaders are happy.
-        Set-Content -Path $Path -Value ($newBlock + "`n") -NoNewline -Encoding utf8
+        # IMPORTANT: use UTF8NoBOM. Windows PowerShell 5.1 defaults `-Encoding utf8`
+        # to UTF8-with-BOM, and a BOM at the start of a .env breaks many parsers
+        # (and `set -a; source ./.env` passes the BOM bytes as part of the first
+        # variable name). pwsh 6+ supports utf8NoBOM as a first-class value.
+        Set-Content -Path $Path -Value ($newBlock + "`n") -NoNewline -Encoding utf8NoBOM
         return
     }
 
@@ -218,7 +222,7 @@ function Write-EnvFileBlock {
         # Use a MatchEvaluator so `$` and `\` in $newBlock aren't treated as
         # substitution tokens by Regex.Replace.
         $updated = [regex]::Replace($existing, $pattern, { param($m) $newBlock })
-        Set-Content -Path $Path -Value $updated -NoNewline -Encoding utf8
+        Set-Content -Path $Path -Value $updated -NoNewline -Encoding utf8NoBOM
         return
     }
 
@@ -230,7 +234,7 @@ function Write-EnvFileBlock {
         $separator += "`n"
     }
     $updated = $existing + $separator + $newBlock + "`n"
-    Set-Content -Path $Path -Value $updated -NoNewline -Encoding utf8
+    Set-Content -Path $Path -Value $updated -NoNewline -Encoding utf8NoBOM
 }
 
 function Remove-EnvFileBlock {
@@ -270,14 +274,17 @@ function Remove-EnvFileBlock {
     }
 
     $updated = [regex]::Replace($existing, $pattern, '')
-    # Collapse runs of 3+ blank lines that may have resulted to at most 2.
-    $updated = [regex]::Replace($updated, "(`r?`n){3,}", "`n`n")
+    # Intentionally NO file-wide blank-line collapse here: doing so would
+    # mutate any deliberate vertical whitespace the user had in content
+    # OUTSIDE the fenced block, which would violate the documented contract
+    # that outside content is preserved verbatim. The worst case is one
+    # extra blank line where the block used to be, which is acceptable.
 
     if ($updated.Length -eq 0) {
         # File would be empty — remove it entirely to avoid leaving a stub.
         Remove-Item -Path $Path -Force
     } else {
-        Set-Content -Path $Path -Value $updated -NoNewline -Encoding utf8
+        Set-Content -Path $Path -Value $updated -NoNewline -Encoding utf8NoBOM
     }
     return $true
 }

@@ -301,17 +301,19 @@ set -a; source ./.env; set +a; <your-command>
 for line in (cat ./.env | grep -v '^#' | grep '='); set -gx (string split -m1 = $line); end; <your-command>
 ```
 
-```powershell
-# PowerShell
-Get-Content ./.env | Where-Object { $_ -match '^[A-Za-z_][A-Za-z0-9_]*=' } | ForEach-Object {
-    $k, $v = $_ -split '=', 2
-    Set-Item -Path "Env:$k" -Value $v.Trim("'""")
-}
-<your-command>
-```
+For **PowerShell**, the values are written in POSIX single-quoted form
+(`KEY='value'`, with embedded quotes escaped as `'\''`). A naive parser
+that just trims quote characters will mis-decode any value containing a
+literal single quote, so use the `bash`/`zsh` snippet above when possible,
+or run `wr-load` directly in your pwsh session — it sets the env vars
+in-process so no separate source step is needed.
 
-Many tools auto-load `./.env` and need no explicit source step: `pytest`,
-`vitest`, Node `dotenv`, Vercel CLI, Docker Compose, etc.
+Some tools support auto-loading `./.env` via a plugin or built-in
+mechanism — e.g. `pytest` with the `pytest-dotenv` plugin, Node apps
+that explicitly call `dotenv.config()`, Docker Compose's `env_file:`,
+the Vercel CLI, etc. Behaviour varies (some load `.env` unconditionally,
+others only with specific filename prefixes or after explicit
+configuration), so verify your tool's docs rather than assume.
 
 > **Security**: secrets are now on disk as plaintext. Ensure `./.env` is
 > gitignored (most projects' `.gitignore` covers `.env` by default — verify

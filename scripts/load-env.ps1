@@ -312,6 +312,28 @@ if ($loadedSecrets.Count -eq 0) {
     exit 1
 }
 
+# Persist to ./.env (in cwd) BEFORE dispatching into the three modes
+# below. The -SpawnShell branch is synchronous (it blocks until the user
+# exits the child shell), so the write must happen up-front for the
+# spawned shell to see the file. The default and -Export branches don't
+# need this ordering, but doing it up-front for all three keeps the flow
+# uniform. Always persist unless explicitly opted out.
+if (-not $NoEnvFile) {
+    $envFilePath = Join-Path (Get-Location).Path '.env'
+    try {
+        # Convert PSObject hashtable to a plain hashtable for the helper.
+        $hashValues = @{}
+        foreach ($entry in $loadedSecrets.GetEnumerator()) {
+            $hashValues[$entry.Key] = $entry.Value
+        }
+        Write-EnvFileBlock -Path $envFilePath -Values $hashValues
+        Write-Stderr "  [OK] Wrote $($loadedSecrets.Count) secret(s) to $envFilePath"
+    } catch {
+        Write-Warn "Failed to write $envFilePath : $_"
+        Write-Stderr "  In-process env vars are still set; use -NoEnvFile to suppress this attempt."
+    }
+}
+
 # Output or set environment variables based on mode
 if ($Export) {
     # Output shell-compatible export commands
@@ -372,25 +394,4 @@ if ($Export) {
     }
     
     Write-Host "`nTip: Use wr-clear to remove loaded secrets from session`n" -ForegroundColor DarkGray
-}
-
-# Always persist to ./.env (in cwd) unless explicitly opted out. This is the
-# bridge for ephemeral-shell agent harnesses: the in-process env vars set
-# above vanish when the next tool call spawns a fresh shell, but the .env
-# file on disk survives and can be sourced by the next command (or read by
-# tools that auto-load .env, like pytest / vitest / dotenv / etc.).
-if (-not $NoEnvFile) {
-    $envFilePath = Join-Path (Get-Location).Path '.env'
-    try {
-        # Convert PSObject hashtable to a plain hashtable for the helper.
-        $hashValues = @{}
-        foreach ($entry in $loadedSecrets.GetEnumerator()) {
-            $hashValues[$entry.Key] = $entry.Value
-        }
-        Write-EnvFileBlock -Path $envFilePath -Values $hashValues
-        Write-Stderr "  [OK] Wrote $($loadedSecrets.Count) secret(s) to $envFilePath"
-    } catch {
-        Write-Warn "Failed to write $envFilePath : $_"
-        Write-Stderr "  In-process env vars are still set; use -NoEnvFile to suppress this attempt."
-    }
 }
