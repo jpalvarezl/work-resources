@@ -178,6 +178,76 @@ SUBSCRIPTION_ID=
     }
 }
 
+Describe "ConvertTo-ShellEscapedSingleQuoted" {
+    Context "PowerShell escaping" {
+        It "doubles single quotes" {
+            ConvertTo-ShellEscapedSingleQuoted -Value "abc'def" -Shell "powershell" | Should -Be "abc''def"
+        }
+
+        It "leaves backslashes literal" {
+            ConvertTo-ShellEscapedSingleQuoted -Value 'a\b' -Shell "powershell" | Should -Be 'a\b'
+        }
+
+        It "leaves `$ literal" {
+            ConvertTo-ShellEscapedSingleQuoted -Value 'a$VAR' -Shell "powershell" | Should -Be 'a$VAR'
+        }
+
+        It "round-trips when wrapped in single quotes and evaluated" {
+            $raw = "abc'def`"with\$pecial"
+            $escaped = ConvertTo-ShellEscapedSingleQuoted -Value $raw -Shell "powershell"
+            $expression = "'$escaped'"
+            $evaluated = Invoke-Expression $expression
+            $evaluated | Should -Be $raw
+        }
+
+        It "produces parseable output for values with single quotes (regression: '\'' bug)" {
+            $raw = "abc'def"
+            $escaped = ConvertTo-ShellEscapedSingleQuoted -Value $raw -Shell "powershell"
+            $expression = "`$env:WR_TEST_VAR = '$escaped';"
+            { Invoke-Expression $expression } | Should -Not -Throw
+            $env:WR_TEST_VAR | Should -Be $raw
+            Remove-Item Env:WR_TEST_VAR -ErrorAction SilentlyContinue
+        }
+
+        It "accepts empty string" {
+            ConvertTo-ShellEscapedSingleQuoted -Value "" -Shell "powershell" | Should -Be ""
+        }
+    }
+
+    Context "Bash/Zsh escaping" {
+        It "uses '\\'' for single quotes (bash)" {
+            ConvertTo-ShellEscapedSingleQuoted -Value "abc'def" -Shell "bash" | Should -Be "abc'\''def"
+        }
+
+        It "uses '\\'' for single quotes (zsh)" {
+            ConvertTo-ShellEscapedSingleQuoted -Value "abc'def" -Shell "zsh" | Should -Be "abc'\''def"
+        }
+
+        It "leaves backslashes literal in bash single quotes" {
+            ConvertTo-ShellEscapedSingleQuoted -Value 'a\b' -Shell "bash" | Should -Be 'a\b'
+        }
+
+        It "leaves `$ literal" {
+            ConvertTo-ShellEscapedSingleQuoted -Value 'a$VAR' -Shell "bash" | Should -Be 'a$VAR'
+        }
+    }
+
+    Context "Fish escaping" {
+        It "backslash-escapes single quotes" {
+            ConvertTo-ShellEscapedSingleQuoted -Value "abc'def" -Shell "fish" | Should -Be "abc\'def"
+        }
+
+        It "backslash-escapes backslashes" {
+            ConvertTo-ShellEscapedSingleQuoted -Value 'a\b' -Shell "fish" | Should -Be 'a\\b'
+        }
+
+        It "escapes backslashes before quotes to avoid corruption" {
+            # raw a\'b -> a\\\'b (each \ doubled, then ' becomes \')
+            ConvertTo-ShellEscapedSingleQuoted -Value "a\'b" -Shell "fish" | Should -Be "a\\\'b"
+        }
+    }
+}
+
 Describe "Test-SecretsOfficerRole" {
     BeforeAll {
         # Mock az CLI calls to avoid real Azure interactions

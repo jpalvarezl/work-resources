@@ -239,9 +239,8 @@ if ($Export) {
     Write-Stderr "  Secret name:   $secretName"
     Write-Stderr "  Env variable:  $EnvVarName"
     
-    # Escape special characters in value
-    $escapedValue = $Value -replace "'", "'\''"
-    
+    $escapedValue = ConvertTo-ShellEscapedSingleQuoted -Value $Value -Shell $Export
+
     # If env var name changed, unset the old one first
     if ($oldEnvVarName) {
         switch ($Export) {

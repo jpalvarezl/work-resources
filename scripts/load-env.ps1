@@ -243,9 +243,8 @@ if ($Export) {
     
     foreach ($entry in $loadedSecrets.GetEnumerator()) {
         $name = $entry.Key
-        # Escape special characters in value
-        $value = $entry.Value -replace "'", "'\''"
-        
+        $value = ConvertTo-ShellEscapedSingleQuoted -Value $entry.Value -Shell $Export
+
         switch ($Export) {
             "fish" {
                 Write-Output "set -gx $name '$value';"

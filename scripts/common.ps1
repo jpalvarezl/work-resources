@@ -5,6 +5,45 @@
 $script:ResourceNamePattern = '^[a-zA-Z][a-zA-Z0-9-]*$'
 $script:EnvVarNamePattern = '^[A-Za-z_][A-Za-z0-9_]*$'
 
+function ConvertTo-ShellEscapedSingleQuoted {
+    <#
+    .SYNOPSIS
+        Escapes a value for embedding inside a single-quoted string in the target shell.
+    .DESCRIPTION
+        Returns the escaped inner content WITHOUT surrounding quotes. The caller
+        wraps with single quotes appropriate for the shell.
+
+        Each shell has different escape rules for single-quoted strings:
+        - bash/zsh (POSIX): no escapes are honored; close quote, insert escaped quote, reopen ('\'')
+        - fish: backslash escapes for \ and ' (other chars are literal)
+        - powershell: a single quote is escaped by doubling it ('')
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Value,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("fish", "bash", "zsh", "powershell")]
+        [string]$Shell
+    )
+
+    switch ($Shell) {
+        "powershell" {
+            return $Value -replace "'", "''"
+        }
+        "fish" {
+            # Replace backslashes first so they don't double-escape the inserted \'
+            $escaped = $Value -replace '\\', '\\'
+            return $escaped -replace "'", "\'"
+        }
+        default {
+            # bash / zsh
+            return $Value -replace "'", "'\''"
+        }
+    }
+}
+
 function Get-ProjectRoot {
     <#
     .SYNOPSIS
@@ -141,11 +180,13 @@ function Test-SecretsOfficerRole {
         return $false
     }
 
-    # Strategy 1: Check role assignments (requires ARM read permission)
+    # Strategy 1: Check role assignments (requires ARM read permission).
+    # --include-inherited honors Officer/Administrator roles inherited from the
+    # resource group or subscription scope, which is the common case.
     $vaultId = az keyvault show --name $VaultName --resource-group $ResourceGroupName --query "id" -o tsv 2>$null
     if (-not [string]::IsNullOrWhiteSpace($vaultId)) {
         $assignee = $account.user.name
-        $roles = az role assignment list --assignee $assignee --scope $vaultId --query "[].roleDefinitionName" -o json 2>$null | ConvertFrom-Json
+        $roles = az role assignment list --assignee $assignee --scope $vaultId --include-inherited --query "[].roleDefinitionName" -o json 2>$null | ConvertFrom-Json
 
         if ($null -ne $roles -and $roles.Count -gt 0) {
             # Role query succeeded — trust the result
@@ -156,12 +197,17 @@ function Test-SecretsOfficerRole {
         }
     }
 
-    # Strategy 2: Probe data-plane write access by attempting to set a known test secret
+    # Strategy 2: Probe data-plane write access by attempting to set a known test secret.
+    # Only reached when Strategy 1 returns no info (e.g., the caller lacks
+    # Microsoft.Authorization/roleAssignments/read but still has data-plane perms).
     $probeName = "wr-access-probe"
     $probeOutput = az keyvault secret set --vault-name $VaultName --name $probeName --value "probe" 2>&1
     if ($LASTEXITCODE -eq 0) {
-        # Clean up the probe secret
+        # Best-effort cleanup: delete + purge so we don't leave a soft-deleted
+        # secret cluttering the vault. Purge will silently fail when purge
+        # protection is enabled, which is acceptable.
         az keyvault secret delete --vault-name $VaultName --name $probeName 2>$null | Out-Null
+        az keyvault secret purge --vault-name $VaultName --name $probeName 2>$null | Out-Null
         return $true
     }
 
