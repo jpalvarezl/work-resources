@@ -21,6 +21,13 @@
     When specified, only secrets whose 'flavor' tag matches one of the requested
     flavors are loaded; legacy untagged secrets are excluded.
 
+.PARAMETER Name
+    Optional: Narrow to a single secret by its short name (the same `-Name`
+    you would have passed to `wr-save`). Requires `-Resource` and accepts at
+    most one `-Resource` / one `-Flavor`. Matches the composed KV secret name
+    `{Resource}-{Name}` (or `{Resource}-{Flavor}-{Name}` when `-Flavor` is set).
+    The secret must still satisfy the `-Resource` / `-Flavor` tag filters.
+
 .PARAMETER Export
     Output shell-compatible export commands instead of setting vars in PowerShell.
     Supported values: fish, bash, zsh, powershell
@@ -45,6 +52,11 @@
     Loads only secrets whose resource='foundry-sdk-deployment' AND flavor='py'.
 
 .EXAMPLE
+    ./load-env.ps1 -Resource foundry-sdk-deployment -Flavor py -Name foundry-project-endpoint
+    Loads exactly one secret: the one whose KV name is
+    'foundry-sdk-deployment-py-foundry-project-endpoint'.
+
+.EXAMPLE
     eval (pwsh ./scripts/load-env.ps1 -Resource myapp -Export fish)
     Loads secrets into your fish shell session.
 
@@ -59,6 +71,10 @@ param(
 
     [Parameter(Mandatory = $false)]
     [string]$Flavor,
+
+    [Parameter(Mandatory = $false)]
+    [ValidatePattern('^([a-zA-Z][a-zA-Z0-9-]*)?$')]
+    [string]$Name,
     
     [ValidateSet("fish", "bash", "zsh", "powershell", "")]
     [string]$Export = "",
@@ -130,6 +146,18 @@ function Test-AzureLogin {
 
 Write-Stderr "`n[KEY] Loading KeyVault Secrets"
 
+# Parse and validate -Name / -Resource / -Flavor BEFORE any network call so
+# misuse fails fast without authenticating to Azure.
+$resourceFilters = @()
+if (-not [string]::IsNullOrWhiteSpace($Resource)) {
+    $resourceFilters = @($Resource -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+$flavorFilters = @()
+if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
+    $flavorFilters = @($Flavor -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+$nameFilter = Resolve-NameFilter -Name $Name -ResourceFilters $resourceFilters -FlavorFilters $flavorFilters
+
 # Check Azure login
 Write-Step "Verifying Azure authentication..."
 
@@ -142,18 +170,14 @@ $settings = Get-Settings
 
 Write-Step "Loading secrets from vault: $($settings.vaultName)"
 
-# Parse resource filter (if provided)
-$resourceFilters = @()
-if (-not [string]::IsNullOrWhiteSpace($Resource)) {
-    $resourceFilters = @($Resource -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+if ($resourceFilters.Count -gt 0) {
     Write-Info "Filtering by resource(s): $($resourceFilters -join ', ')"
 }
-
-# Parse flavor filter (if provided)
-$flavorFilters = @()
-if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
-    $flavorFilters = @($Flavor -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+if ($flavorFilters.Count -gt 0) {
     Write-Info "Filtering by flavor(s): $($flavorFilters -join ', ')"
+}
+if ($nameFilter) {
+    Write-Info "Filtering by secret name: $nameFilter"
 }
 
 # List all secrets from KeyVault with their tags
@@ -165,14 +189,18 @@ if ($null -eq $secretsList -or $secretsList.Count -eq 0) {
     exit 0
 }
 
-# Filter secrets by resource + flavor tags
+# Filter secrets by resource + flavor tags, and by composed name when -Name was supplied
 $secretsToLoad = @()
 $secretNameToTags = @{}
 foreach ($secret in $secretsList) {
-    if (Test-SecretTagsMatchFilter -Tags $secret.tags -ResourceFilters $resourceFilters -FlavorFilters $flavorFilters) {
-        $secretsToLoad += $secret.name
-        $secretNameToTags[$secret.name] = $secret.tags
+    if (-not (Test-SecretTagsMatchFilter -Tags $secret.tags -ResourceFilters $resourceFilters -FlavorFilters $flavorFilters)) {
+        continue
     }
+    if ($nameFilter -and $secret.name -ne $nameFilter) {
+        continue
+    }
+    $secretsToLoad += $secret.name
+    $secretNameToTags[$secret.name] = $secret.tags
 }
 
 if ($secretsToLoad.Count -eq 0) {

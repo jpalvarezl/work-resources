@@ -236,13 +236,14 @@ wr-update -Resource foundry-sdk-deployment -Name foundry-sdk-deployment-py-found
 Load secrets into current session as environment variables.
 
 ```powershell
-wr-load [-Resource <name>] [-Flavor <flavor>] [-Export <shell>] [-SpawnShell]
+wr-load [-Resource <name>] [-Flavor <flavor>] [-Name <name>] [-Export <shell>] [-SpawnShell]
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `-Resource` | No | Resource prefix(es) to filter (loads all if omitted) |
 | `-Flavor` | No | Flavor(s) to filter, comma-separated. When set, only secrets whose `flavor` tag matches are loaded; legacy untagged secrets are excluded. |
+| `-Name` | No | Narrow to a single secret by its short name. Requires `-Resource` and accepts at most one `-Resource` / one `-Flavor`. Matches the composed KV name `{Resource}-{Name}` (or `{Resource}-{Flavor}-{Name}` when `-Flavor` is set). |
 | `-Export` | No | Output format: `bash`, `zsh`, `fish`, `powershell` |
 | `-SpawnShell` | No | Spawn new shell with secrets (isolated) |
 
@@ -253,6 +254,7 @@ wr-load -Resource myapi                              # Filter by resource
 wr-load -Resource "myapi,shared"                     # Multiple resources
 wr-load -Resource foundry-sdk-deployment -Flavor py  # Resource + flavor
 wr-load -Resource foundry-sdk-deployment -Flavor "py,js"
+wr-load -Resource foundry-sdk-deployment -Flavor py -Name foundry-project-endpoint   # Single secret
 wr-load -Resource myapi -SpawnShell                  # Isolated shell
 ```
 
@@ -266,19 +268,21 @@ Use `-Flavor` to disambiguate.
 Display secrets in KeyVault, grouped by resource and then by flavor.
 
 ```powershell
-wr-list [-Resource <name>] [-Flavor <flavor>]
+wr-list [-Resource <name>] [-Flavor <flavor>] [-Name <name>]
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `-Resource` | No | Filter by resource tag (comma-separated list allowed) |
 | `-Flavor` | No | Filter by flavor tag (comma-separated list allowed) |
+| `-Name` | No | Narrow to a single secret by its short name. Requires single-token `-Resource` and at most one `-Flavor`. |
 
 ```powershell
 wr-list                                              # All secrets, grouped by resource and flavor
 wr-list -Resource myapi                              # Filter by resource
 wr-list -Resource "myapi,shared"                     # Multiple resources
 wr-list -Resource foundry-sdk-deployment -Flavor py  # Resource + flavor
+wr-list -Resource foundry-sdk-deployment -Flavor py -Name foundry-project-endpoint   # Single secret
 ```
 
 ### `wr-clear`
@@ -289,6 +293,7 @@ Remove loaded secrets from current session.
 wr-clear                    # Clear all (prompts)
 wr-clear -Resource myapi    # Clear by resource
 wr-clear -Resource foundry-sdk-deployment -Flavor py
+wr-clear -Resource foundry-sdk-deployment -Flavor py -Name foundry-project-endpoint -Force   # Single env var
 wr-clear -Force             # Skip confirmation
 ```
 
@@ -296,6 +301,7 @@ wr-clear -Force             # Skip confirmation
 |-----------|----------|-------------|
 | `-Resource` | No | Restrict to env vars whose secrets are tagged with the given resource |
 | `-Flavor` | No | Restrict to env vars whose secrets are tagged with the given flavor(s) |
+| `-Name` | No | Narrow to the single env var that the composed secret name maps to: `{Resource}-{Name}` (unflavored) or `{Resource}-{Flavor}-{Name}` (flavored). Requires single-token `-Resource` and at most one `-Flavor`. |
 | `-Force` | No | Skip confirmation |
 
 > **Note:** `-Flavor` narrows the *configured* env var names to clear. The OS does not record which flavor originally populated an env var, so if you loaded `FOUNDRY_PROJECT_ENDPOINT` from `flavor=java` and then run `wr-clear -Flavor py`, the var will still be unset (the configured name matches).

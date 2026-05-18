@@ -18,6 +18,13 @@
     e.g. -Flavor "py" or -Flavor "py,js". When omitted, all flavors are shown
     and grouped under each resource.
 
+.PARAMETER Name
+    Optional: Narrow to a single secret by its short name (the same `-Name`
+    you would have passed to `wr-save`). Requires `-Resource` and accepts at
+    most one `-Resource` / one `-Flavor`. Matches the composed KV secret name
+    `{Resource}-{Name}` (or `{Resource}-{Flavor}-{Name}` when `-Flavor` is set).
+    Passing an empty string is treated the same as omitting `-Name`.
+
 .EXAMPLE
     ./list-secrets.ps1
     Shows all secrets from KeyVault grouped by resource and flavor.
@@ -33,12 +40,20 @@
 .EXAMPLE
     ./list-secrets.ps1 -Resource foundry-sdk-deployment -Flavor py
     Shows only secrets where resource='foundry-sdk-deployment' AND flavor='py'.
+
+.EXAMPLE
+    ./list-secrets.ps1 -Resource foundry-sdk-deployment -Flavor py -Name foundry-project-endpoint
+    Shows exactly one secret: the one whose KV name is
+    'foundry-sdk-deployment-py-foundry-project-endpoint'.
 #>
 
 param(
     [string]$Resource,
 
-    [string]$Flavor
+    [string]$Flavor,
+
+    [ValidatePattern('^([a-zA-Z][a-zA-Z0-9-]*)?$')]
+    [string]$Name
 )
 
 $ErrorActionPreference = "Stop"
@@ -74,6 +89,18 @@ function Test-AzureLogin {
 
 Write-Host "`n[LIST] KeyVault Secrets Inventory" -ForegroundColor Magenta
 
+# Parse and validate -Name / -Resource / -Flavor BEFORE any network call so
+# misuse fails fast without authenticating to Azure.
+$resourceFilters = @()
+if (-not [string]::IsNullOrWhiteSpace($Resource)) {
+    $resourceFilters = @($Resource -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+$flavorFilters = @()
+if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
+    $flavorFilters = @($Flavor -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+$nameFilter = Resolve-NameFilter -Name $Name -ResourceFilters $resourceFilters -FlavorFilters $flavorFilters
+
 # Load configuration
 $settings = Get-Settings
 
@@ -94,25 +121,22 @@ if ($null -eq $secretsList -or $secretsList.Count -eq 0) {
     exit 0
 }
 
-# Parse filters
-$resourceFilters = @()
-if (-not [string]::IsNullOrWhiteSpace($Resource)) {
-    $resourceFilters = @($Resource -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-}
-$flavorFilters = @()
-if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
-    $flavorFilters = @($Flavor -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-}
-
-# Apply filters via the shared helper
+# Apply filters via the shared helper, plus exact-name match when -Name was supplied
 $secretsList = $secretsList | Where-Object {
-    Test-SecretTagsMatchFilter -Tags $_.tags -ResourceFilters $resourceFilters -FlavorFilters $flavorFilters
+    if (-not (Test-SecretTagsMatchFilter -Tags $_.tags -ResourceFilters $resourceFilters -FlavorFilters $flavorFilters)) {
+        return $false
+    }
+    if ($nameFilter -and $_.name -ne $nameFilter) {
+        return $false
+    }
+    return $true
 }
 
 if ($null -eq $secretsList -or @($secretsList).Count -eq 0) {
     $filterDesc = @()
     if ($resourceFilters.Count -gt 0) { $filterDesc += "resource=$($resourceFilters -join ',')" }
     if ($flavorFilters.Count -gt 0)   { $filterDesc += "flavor=$($flavorFilters -join ',')" }
+    if ($nameFilter)                  { $filterDesc += "name=$nameFilter" }
     $filterText = if ($filterDesc.Count -gt 0) { " matching $($filterDesc -join ' AND ')" } else { "" }
     Write-Host "`n  No secrets found$filterText." -ForegroundColor Red
     Write-Host "  Run wr-list without filters to see all secrets.`n" -ForegroundColor DarkGray
