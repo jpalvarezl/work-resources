@@ -167,6 +167,7 @@ After installation, these commands are available from any directory:
 | `wr-delete` | Delete a secret from KeyVault |
 | `wr-clear` | Clear secrets from environment |
 | `wr-add-user` | Grant vault access to a teammate |
+| `wr-migrate` | Backfill tags on legacy untagged secrets |
 
 ### `wr-setup`
 
@@ -426,10 +427,20 @@ wr-delete -Resource foundry-sdk-deployment -All -Flavor py -Force
 ## Project Structure
 
 ```
-- `bin/` - Shell wrappers that enable the `wr-*` commands
-- `scripts/` - PowerShell scripts that do the actual work
-- `.env` - Your local vault configuration (gitignored)
+.
+├── bin/                              # Shell wrappers that enable the `wr-*` commands
+├── scripts/                          # PowerShell scripts that do the actual work
+├── tests/                            # Pester unit tests
+├── .agent/skills/work-resources/     # SKILL.md guide for AI coding agents
+├── .env.template                     # Seed config (copy to .env, gitignored)
+├── install.ps1 / install.sh          # Cross-platform installer
+└── uninstall.ps1 / uninstall.sh      # Uninstaller
 ```
+
+After install (`./install.ps1`), the runtime config and a copy of the scripts
+live at `~/.work-resources/` (or `%USERPROFILE%\.work-resources\` on Windows).
+Edit `~/.work-resources/config/.env` to change vault, resource group, or
+subscription.
 
 ## Typical Workflow
 
@@ -509,9 +520,10 @@ Install Azure CLI for your platform (see Prerequisites).
 
 ## Maintenance Scripts
 
-### `migrate-secrets.ps1`
+### `wr-migrate`
 
-A utility script for migrating secrets that are missing required tags (`env-var-name` and `resource`). This is useful for:
+A utility command for migrating secrets that are missing required tags
+(`env-var-name` and `resource`). Useful for:
 
 - Cleaning up secrets created before the tag-based system
 - Fixing secrets with missing or incomplete tags
@@ -519,16 +531,16 @@ A utility script for migrating secrets that are missing required tags (`env-var-
 
 ```powershell
 # Preview what needs migration
-./scripts/migrate-secrets.ps1 -DryRun
+wr-migrate -DryRun
 
-# Run migration interactively
-./scripts/migrate-secrets.ps1
+# Run migration interactively (prompts for each missing tag)
+wr-migrate
 
-# Skip confirmation prompts (still prompts for tag values)
-./scripts/migrate-secrets.ps1 -Force
+# Skip the up-front "proceed?" confirmation (still prompts per-secret for tag values)
+wr-migrate -Force
 ```
 
-> **Note:** This script is not part of the `wr-*` CLI suite—it's a one-off maintenance tool.
+> Requires the Officer role. Prompts interactively for tag values, so do not invoke unattended unless you can answer the prompts.
 
 ## License
 
