@@ -284,36 +284,12 @@ FOUNDRY_MODEL_NAME='...'
 # <<< work-resources <<<
 ```
 
+- Values are written in POSIX single-quoted form (`KEY='value'`, with embedded
+  single quotes escaped as `'\''`).
 - A subsequent `wr-load` **replaces** the fenced block (does not accumulate).
 - `wr-clear` **removes** the fenced block. Content outside the fences is always
   preserved.
 - Pass `-NoEnvFile` on either command to opt out of the file write/removal.
-
-How to consume the file from a subsequent shell command:
-
-```bash
-# bash / zsh
-set -a; source ./.env; set +a; <your-command>
-```
-
-```fish
-# fish
-for line in (cat ./.env | grep -v '^#' | grep '='); set -gx (string split -m1 = $line); end; <your-command>
-```
-
-For **PowerShell**, the values are written in POSIX single-quoted form
-(`KEY='value'`, with embedded quotes escaped as `'\''`). A naive parser
-that just trims quote characters will mis-decode any value containing a
-literal single quote, so use the `bash`/`zsh` snippet above when possible,
-or run `wr-load` directly in your pwsh session — it sets the env vars
-in-process so no separate source step is needed.
-
-Some tools support auto-loading `./.env` natively or via a plugin, but
-behaviour varies a lot — some load it unconditionally, some only with a
-specific filename or prefix, some require explicit configuration, and
-some don't read `.env` at all. **Consult your tool's docs rather than
-assuming.** When in doubt, the explicit `set -a; source ./.env; set +a`
-form above works universally for any process you launch from bash/zsh.
 
 > **Security**: secrets are now on disk as plaintext. Ensure `./.env` is
 > gitignored (most projects' `.gitignore` covers `.env` by default — verify

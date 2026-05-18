@@ -125,19 +125,8 @@ The bootstrap sequence is:
    vars `wr-load` sets in one tool call are lost by the next. `wr-load`
    therefore **always also writes** the loaded secrets to `./.env` (in
    the current working directory) inside a fenced `# >>> work-resources
-   >>>` block. Subsequent tool calls have two options to consume the
-   file:
-   - **Auto-loaded by the tool**: some tools support reading `./.env`
-     natively or via a plugin, but behaviour varies a lot — some load
-     unconditionally, some require a plugin, some need explicit
-     configuration, some don't read it at all. Consult the tool's docs
-     rather than assume.
-   - **Manually sourced**: when the tool does not auto-load, prepend
-     `set -a; source ./.env; set +a &&` (bash/zsh) to your command.
-     This works universally. For PowerShell consumers, prefer running
-     `wr-load` directly in the pwsh session — the .env file is in POSIX
-     single-quoted form and a naive trim-quotes parser will mis-decode
-     values that contain a literal single quote.
+   >>>` block. Values are POSIX single-quoted (`KEY='value'`, with
+   embedded single quotes escaped as `'\''`).
 
    `wr-clear` removes the fenced block (even from a fresh shell where
    the in-process env vars from a previous `wr-load` have already
@@ -395,24 +384,25 @@ wr-clear -Resource myapi -Force     # optional cleanup
 
 When each tool call spawns a fresh shell process — typical for Copilot CLI,
 claude-code, pi-mono, and similar harnesses — the in-process env vars set
-by `wr-load` are gone by the next call. Use the `./.env` file that
-`wr-load` writes for you to bridge the gap. Pseudocode for a three-step
-agent task:
+by `wr-load` are gone by the next call. `wr-load` writes the values to
+`./.env` (cwd) so subsequent tool calls can pick them up from disk. How
+to read the file is up to the consumer; assume the user knows how to
+integrate `.env` with whatever they're running.
 
 ```text
-# Tool call #1 (fresh pwsh): seed the values, populating ./.env
+# Tool call #1: seed the values, populating ./.env
 wr-load -Resource myapi -Flavor py
 
-# Tool call #2 (fresh bash): tools that don't auto-load .env need to source it
-set -a; source ./.env; set +a && pytest                # works for any test runner
+# Tool calls #2..N: anything that needs MYAPI_* env vars, however the
+# user normally consumes a .env in their stack.
 
-# Tool call #3 (fresh bash): same pattern for any other tool
-set -a; source ./.env; set +a && curl -H "Authorization: Bearer $MYAPI_API_KEY" https://...
+# Final tool call: cleanup
+wr-clear -Force
 ```
 
-The fenced block in `./.env` survives across all three calls, so subsequent
-commands keep working without re-hitting KeyVault. Run `wr-clear -Force`
-when done to remove both the in-process env vars and the `./.env` block.
+The fenced block in `./.env` survives across all calls, so subsequent
+commands keep working without re-hitting KeyVault. `wr-clear -Force`
+removes both the in-process env vars and the `./.env` block.
 
 ### Save multiple secrets for a resource
 ```powershell
