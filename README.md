@@ -270,12 +270,13 @@ wr-list [-Resource <name>] [-Flavor <flavor>]
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `-Resource` | No | Filter by resource tag |
+| `-Resource` | No | Filter by resource tag (comma-separated list allowed) |
 | `-Flavor` | No | Filter by flavor tag (comma-separated list allowed) |
 
 ```powershell
 wr-list                                              # All secrets, grouped by resource and flavor
 wr-list -Resource myapi                              # Filter by resource
+wr-list -Resource "myapi,shared"                     # Multiple resources
 wr-list -Resource foundry-sdk-deployment -Flavor py  # Resource + flavor
 ```
 

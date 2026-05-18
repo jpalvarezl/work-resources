@@ -9,8 +9,9 @@
     'env-var-name' tag.
 
 .PARAMETER Resource
-    Filter to show only secrets with a specific resource tag. Single value;
-    use the full list view (no filter) to see all resources.
+    Optional: Filter by resource tag. Single value or comma-separated list,
+    e.g. -Resource "myapi" or -Resource "myapi,shared". When omitted, all
+    resources are shown.
 
 .PARAMETER Flavor
     Optional: Filter by flavor tag. Single value or comma-separated list,
@@ -24,6 +25,10 @@
 .EXAMPLE
     ./list-secrets.ps1 -Resource myapp
     Shows only secrets with resource tag 'myapp'.
+
+.EXAMPLE
+    ./list-secrets.ps1 -Resource "myapp,shared"
+    Shows secrets for both 'myapp' and 'shared' resources.
 
 .EXAMPLE
     ./list-secrets.ps1 -Resource foundry-sdk-deployment -Flavor py
