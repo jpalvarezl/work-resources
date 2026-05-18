@@ -39,6 +39,16 @@
     Instead of modifying current session, spawn a new shell with secrets loaded.
     Exit the spawned shell to return to a clean session.
 
+.PARAMETER NoEnvFile
+    Disable the default behaviour of writing a fenced `# >>> work-resources >>>`
+    block to `./.env` in the current working directory. By default, after
+    loading secrets into the current process's environment, this script also
+    persists them to `./.env` so that subsequent ephemeral shell sessions
+    (a common pattern in AI agent harnesses) can pick them up by sourcing
+    the file (e.g. `set -a; source ./.env; set +a` in bash) or relying on
+    a tool's built-in `.env` autoloading (pytest, vitest, dotenv, etc.).
+    Pass `-NoEnvFile` to opt out of the file write entirely.
+
 .EXAMPLE
     ./load-env.ps1
     Loads all secrets from KeyVault into current PowerShell session.
@@ -79,7 +89,9 @@ param(
     [ValidateSet("fish", "bash", "zsh", "powershell", "")]
     [string]$Export = "",
     
-    [switch]$SpawnShell
+    [switch]$SpawnShell,
+
+    [switch]$NoEnvFile
 )
 
 $ErrorActionPreference = "Stop"
@@ -360,4 +372,25 @@ if ($Export) {
     }
     
     Write-Host "`nTip: Use wr-clear to remove loaded secrets from session`n" -ForegroundColor DarkGray
+}
+
+# Always persist to ./.env (in cwd) unless explicitly opted out. This is the
+# bridge for ephemeral-shell agent harnesses: the in-process env vars set
+# above vanish when the next tool call spawns a fresh shell, but the .env
+# file on disk survives and can be sourced by the next command (or read by
+# tools that auto-load .env, like pytest / vitest / dotenv / etc.).
+if (-not $NoEnvFile) {
+    $envFilePath = Join-Path (Get-Location).Path '.env'
+    try {
+        # Convert PSObject hashtable to a plain hashtable for the helper.
+        $hashValues = @{}
+        foreach ($entry in $loadedSecrets.GetEnumerator()) {
+            $hashValues[$entry.Key] = $entry.Value
+        }
+        Write-EnvFileBlock -Path $envFilePath -Values $hashValues
+        Write-Stderr "  [OK] Wrote $($loadedSecrets.Count) secret(s) to $envFilePath"
+    } catch {
+        Write-Warn "Failed to write $envFilePath : $_"
+        Write-Stderr "  In-process env vars are still set; use -NoEnvFile to suppress this attempt."
+    }
 }

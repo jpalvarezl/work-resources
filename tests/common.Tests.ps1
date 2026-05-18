@@ -470,6 +470,113 @@ Describe "Resolve-NameFilter" {
     }
 }
 
+Describe "Write-EnvFileBlock and Remove-EnvFileBlock" {
+    BeforeEach {
+        $script:envFile = Join-Path $TestDrive "env-test-$(Get-Random).env"
+    }
+
+    Context "Write-EnvFileBlock" {
+        It "creates the file when missing, with a sorted fenced block" {
+            Write-EnvFileBlock -Path $envFile -Values @{ B = 'two'; A = 'one' }
+            Test-Path $envFile | Should -BeTrue
+            $content = Get-Content $envFile -Raw
+            $content | Should -BeLike "*# >>> work-resources >>>*"
+            $content | Should -BeLike "*# <<< work-resources <<<*"
+            # A must appear before B (sorted)
+            $idxA = $content.IndexOf("A='one'")
+            $idxB = $content.IndexOf("B='two'")
+            $idxA | Should -BeGreaterThan -1
+            $idxB | Should -BeGreaterThan $idxA
+        }
+
+        It "creates parent directory if missing" {
+            $nested = Join-Path $TestDrive "deep/sub/.env"
+            Write-EnvFileBlock -Path $nested -Values @{ X = 'y' }
+            Test-Path $nested | Should -BeTrue
+        }
+
+        It "appends a fenced block to an existing non-wr .env preserving user content" {
+            $userContent = "USER_VAR=keep_me`nANOTHER=keep_too"
+            Set-Content -Path $envFile -Value $userContent -NoNewline -Encoding utf8
+
+            Write-EnvFileBlock -Path $envFile -Values @{ NEW = 'value' }
+
+            $content = Get-Content $envFile -Raw
+            $content | Should -BeLike "*USER_VAR=keep_me*"
+            $content | Should -BeLike "*ANOTHER=keep_too*"
+            $content | Should -BeLike "*NEW='value'*"
+            # User content must come first; block appended at the end
+            $content.IndexOf("USER_VAR") | Should -BeLessThan $content.IndexOf("# >>> work-resources >>>")
+        }
+
+        It "replaces the fenced block on a second call, preserving outside content" {
+            Set-Content -Path $envFile -Value "USER_VAR=keep_me`n" -NoNewline -Encoding utf8
+            Write-EnvFileBlock -Path $envFile -Values @{ FIRST = 'one' }
+            Write-EnvFileBlock -Path $envFile -Values @{ SECOND = 'two' }
+
+            $content = Get-Content $envFile -Raw
+            $content | Should -BeLike "*USER_VAR=keep_me*"
+            $content | Should -Not -BeLike "*FIRST=*"
+            $content | Should -BeLike "*SECOND='two'*"
+            # Only one fenced block
+            ([regex]::Matches($content, [regex]::Escape("# >>> work-resources >>>"))).Count | Should -Be 1
+        }
+
+        It "round-trips values containing single quotes" {
+            Write-EnvFileBlock -Path $envFile -Values @{ TRICKY = "a'b'c" }
+            $content = Get-Content $envFile -Raw
+            # POSIX close-escape-reopen form
+            $content | Should -BeLike "*TRICKY='a'\''b'\''c'*"
+        }
+
+        It "round-trips values containing backslashes and dollar signs" {
+            Write-EnvFileBlock -Path $envFile -Values @{ V = 'a\b$c' }
+            $content = Get-Content $envFile -Raw
+            # Inside POSIX single quotes, \ and $ are literal — no escaping needed
+            $content | Should -BeLike "*V='a\b`$c'*"
+        }
+
+        It "round-trips values containing equals signs" {
+            Write-EnvFileBlock -Path $envFile -Values @{ EQ = 'left=right' }
+            $content = Get-Content $envFile -Raw
+            $content | Should -BeLike "*EQ='left=right'*"
+        }
+    }
+
+    Context "Remove-EnvFileBlock" {
+        It "removes the fenced block leaving outside content untouched" {
+            Set-Content -Path $envFile -Value "USER_VAR=keep_me`n" -NoNewline -Encoding utf8
+            Write-EnvFileBlock -Path $envFile -Values @{ TEMP = 'gone' }
+            $removed = Remove-EnvFileBlock -Path $envFile
+            $removed | Should -BeTrue
+
+            $content = Get-Content $envFile -Raw
+            $content | Should -BeLike "*USER_VAR=keep_me*"
+            $content | Should -Not -BeLike "*# >>> work-resources >>>*"
+            $content | Should -Not -BeLike "*TEMP=*"
+        }
+
+        It "returns false and is a no-op when no block exists in file" {
+            Set-Content -Path $envFile -Value "USER_VAR=keep_me`n" -NoNewline -Encoding utf8
+            $removed = Remove-EnvFileBlock -Path $envFile
+            $removed | Should -BeFalse
+            (Get-Content $envFile -Raw) | Should -Be "USER_VAR=keep_me`n"
+        }
+
+        It "returns false when the file does not exist" {
+            $removed = Remove-EnvFileBlock -Path (Join-Path $TestDrive "nonexistent.env")
+            $removed | Should -BeFalse
+        }
+
+        It "deletes the file entirely when removing the block would leave it empty" {
+            Write-EnvFileBlock -Path $envFile -Values @{ ONLY = 'one' }
+            $removed = Remove-EnvFileBlock -Path $envFile
+            $removed | Should -BeTrue
+            Test-Path $envFile | Should -BeFalse
+        }
+    }
+}
+
 Describe "Test-SecretsOfficerRole" {
     BeforeAll {
         # Mock az CLI calls to avoid real Azure interactions

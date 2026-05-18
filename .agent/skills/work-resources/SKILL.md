@@ -119,12 +119,28 @@ The bootstrap sequence is:
 
 ## Key rules for agents
 
-1. **Minimise `wr-load` calls.** `wr-load` does N+1 network calls to KeyVault
+1. **`wr-load` persists values to `./.env`** — use it to bridge ephemeral
+   shells. Most modern agent harnesses (Copilot CLI, claude-code,
+   pi-mono, etc.) run each shell command in a fresh process, so the env
+   vars `wr-load` sets in one tool call are lost by the next. `wr-load`
+   therefore **always also writes** the loaded secrets to `./.env` (in
+   the current working directory) inside a fenced `# >>> work-resources
+   >>>` block. Subsequent tool calls have two options to consume the
+   file:
+   - **Auto-loaded by the tool**: `pytest`, `vitest`, node `dotenv`,
+     Vercel CLI, Docker Compose, etc. read `./.env` automatically.
+   - **Manually sourced**: prepend the appropriate one-liner to your
+     command, e.g. `set -a; source ./.env; set +a && pytest` (bash/zsh).
+
+   `wr-clear` removes the fenced block. User-authored content in
+   `./.env` (outside the fences) is always preserved by both commands.
+   Pass `-NoEnvFile` to either to opt out of the file write/removal.
+2. **Minimise `wr-load` calls.** `wr-load` does N+1 network calls to KeyVault
    (one list + one show per secret). Call it at most **once per resource/flavor
-   combination per session**, then reuse the populated env vars in subsequent
-   commands. Do not call `wr-load` again for values you already have in this
-   shell.
-2. **Load the narrowest set you actually need.** Each per-secret round-trip to
+   combination per session**, then reuse the populated env vars — and the
+   `./.env` file — in subsequent commands. Do not call `wr-load` again
+   for values you already have.
+3. **Load the narrowest set you actually need.** Each per-secret round-trip to
    KeyVault is non-trivial — a full-flavor load can take seconds to minutes
    depending on size, and loading an entire vault is wasteful. Prefer the most
    specific filter you can justify, in this order:
@@ -142,17 +158,17 @@ The bootstrap sequence is:
    If the user's intent is ambiguous, call `wr-list -Resource R [-Flavor F]`
    first (cheap — one `list` call, no per-secret `show`s) to discover the
    secret name, then load surgically with `-Name`.
-3. **Always pass `-Value` to `wr-save` and `wr-update`.** Both prompt
+4. **Always pass `-Value` to `wr-save` and `wr-update`.** Both prompt
    interactively when `-Value` is omitted; that will hang an agent session.
-4. **Always pass `-Force` to destructive commands** (`wr-clear`, `wr-delete`)
+5. **Always pass `-Force` to destructive commands** (`wr-clear`, `wr-delete`)
    to skip the confirmation prompt.
-5. **Disambiguate with `-Flavor` when multiple flavors exist for the same env
+6. **Disambiguate with `-Flavor` when multiple flavors exist for the same env
    var name.** If `wr-load -Resource X` (no `-Flavor`) selects more than one
    secret mapping to the same env-var, the tool warns and the last-loaded
    value wins — pick a specific `-Flavor` instead.
-6. **Use `wr-list` before destructive operations** to verify what will be
+7. **Use `wr-list` before destructive operations** to verify what will be
    affected. Especially before `wr-delete -All`.
-7. **Do not invent secret names.** Inspect with `wr-list` first; secret names
+8. **Do not invent secret names.** Inspect with `wr-list` first; secret names
    in KeyVault follow `{resource}-{name}` or `{resource}-{flavor}-{name}`.
 
 ## Conventions
@@ -252,7 +268,9 @@ The new value is also set in the current PowerShell session as
 
 ### `wr-load`
 Fetch secrets from KeyVault and set them as environment variables in the
-current shell.
+current shell. **Always also writes the loaded values to `./.env` in the
+current working directory**, inside a fenced `# >>> work-resources >>>`
+block — see Rule #1.
 
 ```powershell
 wr-load                                         # Load every secret in the vault
@@ -263,6 +281,7 @@ wr-load -Resource <r> -Flavor "py,js"           # Multiple flavors
 wr-load -Resource <r> -Flavor <f> -Name <n>     # Single secret: matches {r}-{f}-{n}
 wr-load -Resource <r> -Export bash              # Print export commands instead of mutating session
 wr-load -Resource <r> -SpawnShell               # Spawn a child shell with env vars set
+wr-load -Resource <r> -NoEnvFile                # Skip the ./.env write (in-process env still set)
 ```
 
 When the matched set contains multiple secrets sharing the same
@@ -286,8 +305,9 @@ wr-list -Resource <r> -Flavor <f> -Name <n>             # Single secret: matches
 Read-only; does not require Officer role.
 
 ### `wr-clear`
-Unset env vars that `wr-load` could have populated. The filter narrows the
-set of env-var names to clear; it does **not** verify which flavor populated
+Unset env vars that `wr-load` could have populated, AND remove the
+work-resources fenced block from `./.env`. The filter narrows the set
+of env-var names to clear; it does **not** verify which flavor populated
 each var (the OS does not retain that provenance).
 
 ```powershell
@@ -295,6 +315,7 @@ wr-clear -Force                                 # Clear everything wr-load could
 wr-clear -Resource <r> -Force
 wr-clear -Resource <r> -Flavor <f> -Force
 wr-clear -Resource <r> -Flavor <f> -Name <n> -Force   # Single env var (the one {r}-{f}-{n} maps to)
+wr-clear -Force -NoEnvFile                      # Clear in-process only, leave ./.env alone
 ```
 
 ### `wr-delete`
@@ -359,6 +380,29 @@ wr-load -Resource myapi -Flavor py
 pytest                              # or npm test, etc.
 wr-clear -Resource myapi -Force     # optional cleanup
 ```
+
+### Bridge ephemeral shells via `./.env` (the common agent-harness case)
+
+When each tool call spawns a fresh shell process — typical for Copilot CLI,
+claude-code, pi-mono, and similar harnesses — the in-process env vars set
+by `wr-load` are gone by the next call. Use the `./.env` file that
+`wr-load` writes for you to bridge the gap. Pseudocode for a three-step
+agent task:
+
+```text
+# Tool call #1 (fresh pwsh): seed the values, populating ./.env
+wr-load -Resource myapi -Flavor py
+
+# Tool call #2 (fresh bash): tools that auto-load .env need no further setup
+pytest                              # pytest reads ./.env on startup
+
+# Tool call #3 (fresh bash): tools that DON'T auto-load .env — source it first
+set -a; source ./.env; set +a && curl -H "Authorization: Bearer $MYAPI_API_KEY" https://...
+```
+
+The fenced block in `./.env` survives across all three calls, so subsequent
+commands keep working without re-hitting KeyVault. Run `wr-clear -Force`
+when done to remove both the in-process env vars and the `./.env` block.
 
 ### Save multiple secrets for a resource
 ```powershell

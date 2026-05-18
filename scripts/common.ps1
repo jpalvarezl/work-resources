@@ -145,6 +145,143 @@ function ConvertTo-ShellEscapedSingleQuoted {
     }
 }
 
+# Marker comments that bracket the wr-managed block inside a user's .env file.
+# These are intentionally distinctive — the chance of a hand-written `.env`
+# already containing this exact string is essentially zero.
+$script:EnvFileBlockStart = '# >>> work-resources >>>'
+$script:EnvFileBlockEnd   = '# <<< work-resources <<<'
+
+function Write-EnvFileBlock {
+    <#
+    .SYNOPSIS
+        Writes (or replaces) the work-resources block inside a dotenv file.
+    .DESCRIPTION
+        Owns the disk-side of the wr-load -> .env handoff. Given a hashtable
+        of {KEY=value}, emits a fenced block that looks like:
+
+            # >>> work-resources >>>
+            FOO='bar'
+            QUUX='baz'
+            # <<< work-resources <<<
+
+        Existing content OUTSIDE the fences is preserved verbatim. If a fenced
+        block already exists, it is REPLACED with the new content (so repeated
+        wr-load calls do not accumulate stale entries). If no block exists,
+        one is appended to the end of the file. If the file does not exist,
+        it is created with just the fenced block.
+
+        Values are emitted as POSIX single-quoted strings using the existing
+        ConvertTo-ShellEscapedSingleQuoted helper. Keys are sorted ascending
+        for determinism.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Values
+    )
+
+    # Build the new fenced block content
+    $lines = @()
+    $lines += $script:EnvFileBlockStart
+    foreach ($key in ($Values.Keys | Sort-Object)) {
+        $escaped = ConvertTo-ShellEscapedSingleQuoted -Value $Values[$key] -Shell 'bash'
+        $lines += "$key='$escaped'"
+    }
+    $lines += $script:EnvFileBlockEnd
+    $newBlock = $lines -join "`n"
+
+    if (-not (Test-Path $Path)) {
+        # Brand-new file: ensure parent dir exists, then just emit the block.
+        $parent = Split-Path $Path -Parent
+        if ($parent -and -not (Test-Path $parent)) {
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
+        }
+        # End with a trailing newline so editors / loaders are happy.
+        Set-Content -Path $Path -Value ($newBlock + "`n") -NoNewline -Encoding utf8
+        return
+    }
+
+    $existing = Get-Content -Path $Path -Raw -ErrorAction SilentlyContinue
+    if ($null -eq $existing) { $existing = '' }
+
+    # Replace an existing fenced block in place. The (?s) flag makes . match
+    # newlines so we can span the whole block in one match. Both fences are
+    # regex-escaped because they contain '>'.
+    $startEsc = [regex]::Escape($script:EnvFileBlockStart)
+    $endEsc   = [regex]::Escape($script:EnvFileBlockEnd)
+    $pattern  = "(?s)$startEsc.*?$endEsc"
+
+    if ([regex]::IsMatch($existing, $pattern)) {
+        # In-place replacement preserves everything outside the fences.
+        # Use a MatchEvaluator so `$` and `\` in $newBlock aren't treated as
+        # substitution tokens by Regex.Replace.
+        $updated = [regex]::Replace($existing, $pattern, { param($m) $newBlock })
+        Set-Content -Path $Path -Value $updated -NoNewline -Encoding utf8
+        return
+    }
+
+    # No existing block: append, separated by a blank line if the file is
+    # non-empty so the block stands out from surrounding content.
+    $separator = ''
+    if ($existing.Length -gt 0) {
+        if (-not $existing.EndsWith("`n")) { $separator = "`n" }
+        $separator += "`n"
+    }
+    $updated = $existing + $separator + $newBlock + "`n"
+    Set-Content -Path $Path -Value $updated -NoNewline -Encoding utf8
+}
+
+function Remove-EnvFileBlock {
+    <#
+    .SYNOPSIS
+        Removes the work-resources block from a dotenv file.
+    .DESCRIPTION
+        The inverse of Write-EnvFileBlock. Strips the fenced block (and its
+        fences) while leaving content outside the fences untouched. No-op if
+        the file does not exist or contains no fenced block.
+
+        Returns $true when a block was removed, $false otherwise. The boolean
+        lets callers decide whether to print a "removed" status line.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        return $false
+    }
+
+    $existing = Get-Content -Path $Path -Raw -ErrorAction SilentlyContinue
+    if ($null -eq $existing -or $existing.Length -eq 0) {
+        return $false
+    }
+
+    $startEsc = [regex]::Escape($script:EnvFileBlockStart)
+    $endEsc   = [regex]::Escape($script:EnvFileBlockEnd)
+    # Also eat one trailing newline so removing the block doesn't leave
+    # a stray blank line. (?s) so . matches newlines inside the fences.
+    $pattern  = "(?s)$startEsc.*?$endEsc`r?`n?"
+
+    if (-not [regex]::IsMatch($existing, $pattern)) {
+        return $false
+    }
+
+    $updated = [regex]::Replace($existing, $pattern, '')
+    # Collapse runs of 3+ blank lines that may have resulted to at most 2.
+    $updated = [regex]::Replace($updated, "(`r?`n){3,}", "`n`n")
+
+    if ($updated.Length -eq 0) {
+        # File would be empty — remove it entirely to avoid leaving a stub.
+        Remove-Item -Path $Path -Force
+    } else {
+        Set-Content -Path $Path -Value $updated -NoNewline -Encoding utf8
+    }
+    return $true
+}
+
 function Get-ProjectRoot {
     <#
     .SYNOPSIS

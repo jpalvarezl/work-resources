@@ -53,6 +53,13 @@
 .EXAMPLE
     ./clear-env.ps1 -Force
     Clears all secrets without confirmation prompt.
+
+.PARAMETER NoEnvFile
+    Disable the default behaviour of also removing the wr-managed fenced
+    block from `./.env` in the current working directory. By default, this
+    script removes that block (in addition to unsetting in-process env
+    vars) so that the on-disk file and the in-process state stay in sync.
+    Pass `-NoEnvFile` to leave `./.env` untouched.
 #>
 
 param(
@@ -62,7 +69,8 @@ param(
     [string]$Name,
     [switch]$Force,
     [ValidateSet("fish", "bash", "zsh", "powershell", "")]
-    [string]$Export = ""
+    [string]$Export = "",
+    [switch]$NoEnvFile
 )
 
 $ErrorActionPreference = "Stop"
@@ -245,4 +253,19 @@ if (-not [string]::IsNullOrEmpty($Export)) {
         Write-Host "  [OK] Cleared `$env:$var" -ForegroundColor Green
     }
     Write-Host "`n[SUCCESS] Cleared $cleared environment variable(s) from current session.`n" -ForegroundColor Green
+}
+
+# Also remove the wr-managed block from ./.env (in cwd) so the on-disk
+# file and the in-process state stay in sync. Skipped when -NoEnvFile is
+# supplied or when in -Export mode (the caller is running headless and
+# may not be in the cwd they expect us to write into).
+if (-not $NoEnvFile -and [string]::IsNullOrEmpty($Export)) {
+    $envFilePath = Join-Path (Get-Location).Path '.env'
+    try {
+        if (Remove-EnvFileBlock -Path $envFilePath) {
+            Write-Host "  [OK] Removed work-resources block from $envFilePath" -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "  [!] Failed to update $envFilePath : $_" -ForegroundColor Yellow
+    }
 }
