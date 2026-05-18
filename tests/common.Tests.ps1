@@ -432,6 +432,25 @@ Describe "Resolve-NameFilter" {
         }
     }
 
+    Context "ValidatePattern in the consuming scripts accepts empty -Name" {
+        # Regression: a wrapper that splats $Name="" must behave like no -Name.
+        # The script-level [ValidatePattern] must allow empty string at param
+        # binding so Resolve-NameFilter can treat it as 'no filter'.
+        It "accepts empty string at param binding" {
+            function Test-NameParam {
+                param(
+                    [ValidatePattern('^([a-zA-Z][a-zA-Z0-9-]*)?$')]
+                    [string]$Name
+                )
+                $Name
+            }
+            { Test-NameParam -Name "" }    | Should -Not -Throw
+            { Test-NameParam -Name "foo" } | Should -Not -Throw
+            { Test-NameParam -Name "1bad" }| Should -Throw
+            { Test-NameParam -Name "u_s" } | Should -Throw
+        }
+    }
+
     Context "when -Name is set" {
         It "composes {Resource}-{Name} when no flavor supplied" {
             Resolve-NameFilter -Name "endpoint" -ResourceFilters @("myapi") | Should -Be "myapi-endpoint"

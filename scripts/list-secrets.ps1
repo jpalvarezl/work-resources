@@ -18,6 +18,13 @@
     e.g. -Flavor "py" or -Flavor "py,js". When omitted, all flavors are shown
     and grouped under each resource.
 
+.PARAMETER Name
+    Optional: Narrow to a single secret by its short name (the same `-Name`
+    you would have passed to `wr-save`). Requires `-Resource` and accepts at
+    most one `-Resource` / one `-Flavor`. Matches the composed KV secret name
+    `{Resource}-{Name}` (or `{Resource}-{Flavor}-{Name}` when `-Flavor` is set).
+    Passing an empty string is treated the same as omitting `-Name`.
+
 .EXAMPLE
     ./list-secrets.ps1
     Shows all secrets from KeyVault grouped by resource and flavor.
@@ -45,7 +52,7 @@ param(
 
     [string]$Flavor,
 
-    [ValidatePattern('^[a-zA-Z][a-zA-Z0-9-]*$')]
+    [ValidatePattern('^([a-zA-Z][a-zA-Z0-9-]*)?$')]
     [string]$Name
 )
 

@@ -168,8 +168,11 @@ Example: `wr-save -Resource foundry-sdk-deployment -Flavor py -Name foundry-proj
 `resource=foundry-sdk-deployment, flavor=py, env-var-name=FOUNDRY_PROJECT_ENDPOINT`.
 
 `wr-load`, `wr-list`, and `wr-clear` also accept `-Name` to narrow to a single
-secret using the same composition. `-Name` requires `-Resource` (and accepts
-at most one `-Flavor`) so the composed match is unambiguous. Example:
+secret using the same composition. `-Name` requires `-Resource` and accepts
+at most **one** `-Resource` and at most **one** `-Flavor` (multi-value lists
+on either with `-Name` would make the composed match ambiguous and are
+rejected). Passing an empty string for `-Name` is treated the same as
+omitting it. Example:
 
 ```powershell
 wr-load -Resource foundry-sdk-deployment -Flavor py -Name foundry-project-endpoint
@@ -246,7 +249,9 @@ wr-load -Resource <r> -SpawnShell               # Spawn a child shell with env v
 
 When the matched set contains multiple secrets sharing the same
 `env-var-name`, `wr-load` prints a collision warning and last-loaded wins.
-Resolve by adding `-Flavor` (or `-Name` for the most surgical case).
+Resolve by adding `-Flavor` (or `-Flavor` together with `-Name` for the
+surgical single-secret case; bare `-Name` will only match unflavored
+secrets named `{Resource}-{Name}`, not flavored ones).
 
 ### `wr-list`
 Inspect the vault. Groups output by resource, then by flavor when flavors

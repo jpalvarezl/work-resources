@@ -73,7 +73,7 @@ param(
     [string]$Flavor,
 
     [Parameter(Mandatory = $false)]
-    [ValidatePattern('^[a-zA-Z][a-zA-Z0-9-]*$')]
+    [ValidatePattern('^([a-zA-Z][a-zA-Z0-9-]*)?$')]
     [string]$Name,
     
     [ValidateSet("fish", "bash", "zsh", "powershell", "")]

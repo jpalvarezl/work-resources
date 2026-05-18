@@ -18,6 +18,12 @@
     flavor actually populated a given env var in the current session (the OS
     does not retain that provenance).
 
+.PARAMETER Name
+    Optional: Narrow to the single env var that the secret named
+    `{Resource}-{Name}` (or `{Resource}-{Flavor}-{Name}` when `-Flavor` is set)
+    maps to. Requires `-Resource` and accepts at most one `-Resource` / one
+    `-Flavor`. Passing an empty string is treated the same as omitting `-Name`.
+
 .PARAMETER Force
     Skip confirmation prompt.
 
@@ -52,7 +58,7 @@
 param(
     [string]$Resource,
     [string]$Flavor,
-    [ValidatePattern('^[a-zA-Z][a-zA-Z0-9-]*$')]
+    [ValidatePattern('^([a-zA-Z][a-zA-Z0-9-]*)?$')]
     [string]$Name,
     [switch]$Force,
     [ValidateSet("fish", "bash", "zsh", "powershell", "")]
