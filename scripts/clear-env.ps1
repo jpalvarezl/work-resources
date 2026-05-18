@@ -33,6 +33,16 @@
     
     Usage for bash:   eval "$(pwsh ./scripts/clear-env.ps1 -Export bash -Force)"
 
+.PARAMETER NoEnvFile
+    Disable the default behaviour of also removing the wr-managed fenced
+    block from `./.env` in the current working directory. By default, this
+    script removes that block (in addition to unsetting in-process env
+    vars) so that the on-disk file and the in-process state stay in sync.
+    The block is removed regardless of whether any in-process env vars
+    were found (fresh-shell case) and regardless of `-Export` mode (so
+    the eval-and-unset workflow doesn't leave the .env block stranded).
+    Pass `-NoEnvFile` to leave `./.env` untouched.
+
 .EXAMPLE
     ./clear-env.ps1
     Clears all loaded secrets (prompts for confirmation).
@@ -62,7 +72,8 @@ param(
     [string]$Name,
     [switch]$Force,
     [ValidateSet("fish", "bash", "zsh", "powershell", "")]
-    [string]$Export = ""
+    [string]$Export = "",
+    [switch]$NoEnvFile
 )
 
 $ErrorActionPreference = "Stop"
@@ -154,6 +165,27 @@ if ($null -eq $secretsList -or @($secretsList).Count -eq 0) {
         Write-Host "`n  No secrets found$filterText." -ForegroundColor Red
     }
     exit 1
+}
+
+# Remove the wr-managed block from ./.env BEFORE any later early-exit can
+# skip it. This is the agent-harness scenario the PR is designed for:
+# wr-load wrote ./.env in a previous tool call, the in-process env vars
+# vanished when that shell exited, and now wr-clear from a fresh shell
+# must still be able to remove the on-disk block. Runs in -Export mode
+# too (symmetry with wr-load -Export which always writes ./.env).
+if (-not $NoEnvFile) {
+    $envFilePath = Join-Path (Get-Location).Path '.env'
+    try {
+        if (Remove-EnvFileBlock -Path $envFilePath) {
+            if (-not $SilentMode) {
+                Write-Host "  [OK] Removed work-resources block from $envFilePath" -ForegroundColor Green
+            }
+        }
+    } catch {
+        if (-not $SilentMode) {
+            Write-Host "  [!] Failed to update $envFilePath : $_" -ForegroundColor Yellow
+        }
+    }
 }
 
 # Collect all env vars to clear from tags

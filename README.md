@@ -236,7 +236,7 @@ wr-update -Resource foundry-sdk-deployment -Name foundry-sdk-deployment-py-found
 Load secrets into current session as environment variables.
 
 ```powershell
-wr-load [-Resource <name>] [-Flavor <flavor>] [-Name <name>] [-Export <shell>] [-SpawnShell]
+wr-load [-Resource <name>] [-Flavor <flavor>] [-Name <name>] [-Export <shell>] [-SpawnShell] [-NoEnvFile]
 ```
 
 | Parameter | Required | Description |
@@ -246,6 +246,7 @@ wr-load [-Resource <name>] [-Flavor <flavor>] [-Name <name>] [-Export <shell>] [
 | `-Name` | No | Narrow to a single secret by its short name. Requires `-Resource` and accepts at most one `-Resource` / one `-Flavor`. Matches the composed KV name `{Resource}-{Name}` (or `{Resource}-{Flavor}-{Name}` when `-Flavor` is set). |
 | `-Export` | No | Output format: `bash`, `zsh`, `fish`, `powershell` |
 | `-SpawnShell` | No | Spawn new shell with secrets (isolated) |
+| `-NoEnvFile` | No | Skip writing to `./.env`. By default `wr-load` always persists the loaded values to a fenced block in `./.env` so subsequent ephemeral shell commands can pick them up. |
 
 **Examples**:
 ```powershell
@@ -262,6 +263,39 @@ When `-Flavor` is omitted and the selected secrets contain multiple flavors mapp
 to the same env var name (e.g., `FOUNDRY_PROJECT_ENDPOINT` in both `.env` and
 `.py.env`), `wr-load` prints a collision warning and the last-loaded value wins.
 Use `-Flavor` to disambiguate.
+
+#### Persisting to `./.env` (bridging ephemeral shells)
+
+In addition to setting secrets as in-process environment variables, `wr-load`
+**always also writes** them to `./.env` in the current working directory.
+This bridges the common AI-agent workflow where each tool call spawns a fresh
+shell — the in-process env vars from one call don't survive to the next, but
+the on-disk `.env` does.
+
+The block is fenced so it can be updated cleanly and coexist with any pre-existing
+`.env` content the project already has:
+
+```dotenv
+USER_VAR=keep_me                       # your content — never touched
+# >>> work-resources >>>
+FOUNDRY_PROJECT_ENDPOINT='...'
+FOUNDRY_MODEL_NAME='...'
+# ...
+# <<< work-resources <<<
+```
+
+- Values are written in POSIX single-quoted form (`KEY='value'`, with embedded
+  single quotes escaped as `'\''`).
+- A subsequent `wr-load` **replaces** the fenced block (does not accumulate).
+- `wr-clear` **removes** the fenced block. Content outside the fences is always
+  preserved.
+- Pass `-NoEnvFile` on either command to opt out of the file write/removal.
+
+> **Security**: secrets are now on disk as plaintext. Ensure `./.env` is
+> gitignored (most projects' `.gitignore` covers `.env` by default — verify
+> in yours). The fenced block convention uses the exact comment string
+> `# >>> work-resources >>>`, so it won't collide with any other tool's
+> markers.
 
 ### `wr-list`
 
@@ -303,6 +337,7 @@ wr-clear -Force             # Skip confirmation
 | `-Flavor` | No | Restrict to env vars whose secrets are tagged with the given flavor(s) |
 | `-Name` | No | Narrow to the single env var that the composed secret name maps to: `{Resource}-{Name}` (unflavored) or `{Resource}-{Flavor}-{Name}` (flavored). Requires single-token `-Resource` and at most one `-Flavor`. |
 | `-Force` | No | Skip confirmation |
+| `-NoEnvFile` | No | Skip removing the fenced block from `./.env`. By default `wr-clear` removes that block (in addition to unsetting in-process env vars) so the on-disk file and the in-process state stay in sync. |
 
 > **Note:** `-Flavor` narrows the *configured* env var names to clear. The OS does not record which flavor originally populated an env var, so if you loaded `FOUNDRY_PROJECT_ENDPOINT` from `flavor=java` and then run `wr-clear -Flavor py`, the var will still be unset (the configured name matches).
 
