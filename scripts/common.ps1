@@ -7,7 +7,10 @@ $script:EnvVarNamePattern = '^[A-Za-z_][A-Za-z0-9_]*$'
 # Flavor names map to env-file suffixes (e.g. base, superset, py, js, net, java).
 # Lowercase, must start with a letter, may include digits and internal hyphens,
 # must not end with a hyphen so composed secret names never produce '--'.
-$script:FlavorNamePattern = '^[a-z]([a-z0-9-]*[a-z0-9])?$'
+# `(?-i)` makes the regex case-sensitive even when used with PowerShell's
+# `-match` operator and the [ValidatePattern] attribute (both case-insensitive
+# by default).
+$script:FlavorNamePattern = '(?-i)^[a-z]([a-z0-9-]*[a-z0-9])?$'
 
 function Test-SecretTagsMatchFilter {
     <#

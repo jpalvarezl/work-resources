@@ -98,6 +98,29 @@ Describe "Validation Patterns" {
         It "rejects empty string" {
             "" | Should -Not -CMatch $FlavorNamePattern
         }
+
+        It "is case-sensitive when used by PowerShell's case-insensitive matchers (regression: (?-i) modifier present)" {
+            # PowerShell's -match and [ValidatePattern] attribute are
+            # case-insensitive by default. The pattern must embed (?-i)
+            # so callers can't sneak uppercase through.
+            "PY" | Should -Not -Match $FlavorNamePattern
+            "py" | Should -Match $FlavorNamePattern
+        }
+
+        It "[ValidatePattern] using FlavorNamePattern rejects uppercase at param binding" {
+            # Bake the constant into a literal pattern attribute so this also
+            # acts as a regression guard against the attribute being weakened.
+            function Test-FlavorParam {
+                param(
+                    [ValidatePattern('(?-i)^[a-z]([a-z0-9-]*[a-z0-9])?$')]
+                    [string]$Flavor
+                )
+                $Flavor
+            }
+            { Test-FlavorParam -Flavor "PY" }   | Should -Throw
+            { Test-FlavorParam -Flavor "Java" } | Should -Throw
+            { Test-FlavorParam -Flavor "py" }   | Should -Not -Throw
+        }
     }
 }
 

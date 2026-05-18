@@ -67,7 +67,7 @@ param(
     [ValidateSet("fish", "bash", "zsh", "powershell", "")]
     [string]$Export = "",
 
-    [ValidatePattern('^[a-z]([a-z0-9-]*[a-z0-9])?$')]
+    [ValidatePattern('(?-i)^[a-z]([a-z0-9-]*[a-z0-9])?$')]
     [string]$Flavor
 )
 

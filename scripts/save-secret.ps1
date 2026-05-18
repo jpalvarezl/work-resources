@@ -65,7 +65,7 @@ param(
     [ValidatePattern('^[A-Za-z_][A-Za-z0-9_]*$')]
     [string]$EnvVarName,
 
-    [ValidatePattern('^[a-z]([a-z0-9-]*[a-z0-9])?$')]
+    [ValidatePattern('(?-i)^[a-z]([a-z0-9-]*[a-z0-9])?$')]
     [string]$Flavor
 )
 

@@ -63,12 +63,18 @@ param(
     [string]$Flavor
 )
 
-# Validate Flavor format if provided (comma-list pattern for -All, single value for -Name).
+# Validate Flavor format if provided. Comma-list is allowed only with -All;
+# single-delete mode (-Name) composes "{Resource}-{Flavor}-{Name}" so must
+# receive exactly one token.
 if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
-    foreach ($f in ($Flavor -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
-        if ($f -notmatch '^[a-z]([a-z0-9-]*[a-z0-9])?$') {
+    $flavorTokens = @($Flavor -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    foreach ($f in $flavorTokens) {
+        if ($f -notmatch '(?-i)^[a-z]([a-z0-9-]*[a-z0-9])?$') {
             throw "Invalid flavor '$f'. Must be lowercase, start with a letter, and contain only letters, digits, and internal hyphens."
         }
+    }
+    if (-not $All -and $flavorTokens.Count -gt 1) {
+        throw "Single-delete mode (-Name) requires exactly one flavor; got multiple in '$Flavor'. Use -All to delete across multiple flavors."
     }
 }
 
