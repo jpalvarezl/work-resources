@@ -29,93 +29,27 @@ against the configured vault.
 
 ## How agents must invoke the tool
 
-There is exactly **one supported entrypoint**: the `wr-*` commands that the
-installer adds to the user's shell profile (PowerShell functions on Windows;
-shell functions on bash/zsh/fish; symlinks in `~/.local/bin` on POSIX).
-
-- **Always** call `wr-load`, `wr-save`, `wr-list`, etc. as they appear in this
-  skill — by name, with no path prefix.
-- **Never** invoke the underlying PowerShell scripts directly. Specifically:
-  - Do **not** run `~/.work-resources/scripts/load-env.ps1` (or any other
-    script under `~/.work-resources/scripts/` / `%USERPROFILE%\.work-resources\scripts\`).
-    That path is an implementation detail of the installer.
-  - Do **not** clone the repo just to invoke `./scripts/*.ps1` — the README
-    shows those relative paths for the *development* of the tool itself, not
-    for normal use.
-  - Do **not** call `pwsh -File <script>` as a workaround. If `wr-X` isn't
-    resolving, fix the shell environment (see below), don't bypass it.
-
-If `wr-X` is not found in a fresh shell after a successful install, the
-fix is almost always one of:
-
-1. **The shell was opened before install completed.** Open a new shell so
-   the updated profile loads.
-2. **The profile didn't get sourced.** In PowerShell: `. $PROFILE.CurrentUserAllHosts`.
-   In bash/zsh: `source ~/.bashrc` / `source ~/.zshrc`. In fish: start a new shell.
-3. **The install didn't actually run for the current user/shell.** Re-run
-   `./install.ps1` from a clone of the repo. The installer is idempotent.
-
-To verify availability without invoking a network operation:
-
-```powershell
-Get-Command wr-load -ErrorAction SilentlyContinue   # pwsh
-```
-
-```bash
-command -v wr-load                                   # bash/zsh
-type wr-load                                         # fish
-```
-
-If the command isn't present, fall back to the install/repair steps above
-before attempting any work — do **not** try to find and execute the scripts
-directly.
+The only supported entrypoint is the `wr-*` commands the installer adds
+to the user's shell profile. **Never** invoke the underlying scripts at
+`~/.work-resources/scripts/*.ps1` directly, and don't fall back to
+`pwsh -File <script>` if `wr-X` isn't resolving — instead, ask the user
+to re-open the shell (so the profile reloads) or to re-run `install.ps1`.
 
 ## Bootstrapping a new user / machine
 
-Before the installer can complete, the user needs a `.env` file with three
-values. Ask the user for these **before** running `install.ps1` / `install.sh`:
-
-| Key                  | Value                                                                                                |
-|----------------------|------------------------------------------------------------------------------------------------------|
-| `VAULT_NAME`         | Globally unique KeyVault name (3–24 chars, alphanumeric + hyphens, must start with a letter).        |
-| `RESOURCE_GROUP_NAME`| Azure resource group containing the vault.                                                           |
-| `SUBSCRIPTION_ID`    | (Optional) Azure subscription ID. Leave blank to use the user's current `az` default subscription.   |
-
-Where the user gets these values depends on the scenario:
-
-- **Joining an existing team vault** (most common): the vault owner already
-  set these values. Ask them, or look in any onboarding message / `wr-add-user`
-  invite they received. Do NOT make these up.
-- **Creating a brand-new vault**: the user picks `VAULT_NAME` and
-  `RESOURCE_GROUP_NAME` themselves. Confirm the chosen `VAULT_NAME` is not
-  already taken across all of Azure (the `az keyvault create` call will fail
-  with a clear error if it is).
-
-Write the answers to **one** of these locations (the installer reads from
-both, preferring the install location once it exists):
-
-| Stage                          | Path                                                         |
-|--------------------------------|--------------------------------------------------------------|
-| Before first install           | `<repo-clone>/.env` (gitignored; created from `.env.template`)|
-| After install (to change vault)| `~/.work-resources/config/.env`                              |
-
-Example content:
+Before running `install.ps1` / `install.sh`, the user must put a `.env`
+at the repo root (or `~/.work-resources/config/.env` after install)
+with these keys:
 
 ```ini
-# Azure KeyVault Configuration
-VAULT_NAME=ai-foundry-test-secrets
-RESOURCE_GROUP_NAME=openai-test-rg
-SUBSCRIPTION_ID=e72e5254-f265-4e95-9bd2-9ee8e7329051
+VAULT_NAME=...           # globally unique, 3-24 chars, alphanumeric + hyphens
+RESOURCE_GROUP_NAME=...
+SUBSCRIPTION_ID=...      # optional; defaults to current `az` subscription
 ```
 
-The bootstrap sequence is:
-
-1. Clone the repo (or `cd` into an existing clone).
-2. Ask the user for the three values; write them to `<repo>/.env`.
-3. Run `./install.ps1` (Windows / cross-platform) or `./install.sh` (POSIX).
-4. **Start a new shell** so the profile changes take effect.
-5. Run `wr-setup` to join (or create) the vault and assign the RBAC role.
-6. Verify with `wr-list`.
+If the user is joining an existing team vault, ask the vault owner for
+these values — do not guess. After writing `.env`, run the installer,
+open a fresh shell, then `wr-setup`.
 
 ## Key rules for agents
 
@@ -371,89 +305,14 @@ wr-migrate -Force        # Skip the "proceed?" prompt (still prompts for tag val
 the caller has Officer (or Key Vault Administrator) before doing anything.
 If the assertion fails, the script exits with instructions for the user.
 
-## Workflows
-
-### Load secrets and run tests in one shell
-```powershell
-wr-load -Resource myapi -Flavor py
-pytest                              # or npm test, etc.
-wr-clear -Resource myapi -Force     # optional cleanup
-```
-
-### Bridge ephemeral shells via `./.env` (the common agent-harness case)
+## Bridging ephemeral shells
 
 When each tool call spawns a fresh shell process — typical for Copilot CLI,
 claude-code, pi-mono, and similar harnesses — the in-process env vars set
 by `wr-load` are gone by the next call. `wr-load` writes the values to
-`./.env` (cwd) so subsequent tool calls can pick them up from disk. How
-to read the file is up to the consumer; assume the user knows how to
-integrate `.env` with whatever they're running.
-
-```text
-# Tool call #1: seed the values, populating ./.env
-wr-load -Resource myapi -Flavor py
-
-# Tool calls #2..N: anything that needs MYAPI_* env vars, however the
-# user normally consumes a .env in their stack.
-
-# Final tool call: cleanup
-wr-clear -Force
-```
-
-The fenced block in `./.env` survives across all calls, so subsequent
-commands keep working without re-hitting KeyVault. `wr-clear -Force`
-removes both the in-process env vars and the `./.env` block.
-
-### Save multiple secrets for a resource
-```powershell
-wr-save -Resource myapi -Name api-key      -EnvVarName MYAPI_API_KEY      -Value '...'
-wr-save -Resource myapi -Name api-secret   -EnvVarName MYAPI_API_SECRET   -Value '...'
-wr-save -Resource myapi -Name endpoint     -EnvVarName MYAPI_ENDPOINT     -Value 'https://api.example.com'
-wr-list -Resource myapi             # verify
-```
-
-### Mirror a `.azure/<deployment>/` env folder (verbatim, with flavors)
-```powershell
-# For each (deployment, file, VAR=VAL line):
-wr-save -Resource <deployment> -Flavor <flavor> -Name <kebab(VAR)> -EnvVarName <VAR> -Value <VAL>
-
-# Then to consume only the .py.env subset:
-wr-load -Resource <deployment> -Flavor py
-```
-
-### Rotate a single secret value
-```powershell
-# Find the exact KV secret name first
-wr-list -Resource myapi -Flavor py
-# Then update (use the FULL kv secret name for wr-update -Name)
-wr-update -Resource myapi -Flavor py -Name myapi-py-api-key -Value '<new-value>'
-```
-
-### Onboard a teammate
-```powershell
-wr-add-user -Email teammate@company.com                # read-only by default
-wr-add-user -Email teammate@company.com -Role Admin    # writer
-```
-
-## Steps for the agent
-
-1. **Detect availability.** Check whether the user already has the `wr-*` commands on PATH (`Get-Command wr-load -ErrorAction SilentlyContinue` in pwsh; `command -v wr-load` in bash/zsh; `type wr-load` in fish). If they are missing, follow **Bootstrapping a new user / machine** above; do **not** locate the underlying scripts and invoke them directly.
-2. **Detect Azure auth.** If a command fails because the user is not logged in, instruct them to run `az login` once; do not retry in a loop.
-3. **Reach for `wr-list` first** when the user's request lacks a specific resource/flavor/name. Show them the inventory, then ask which slice they want.
-4. **Choose the right command** for the user's intent:
-   - read values into the shell → `wr-load` (apply the narrowest filter you can — see Rule #2)
-   - inspect what's stored → `wr-list`
-   - add a new secret → `wr-save`
-   - rotate an existing value → `wr-update`
-   - remove a secret → `wr-delete`
-   - undo a load in the current session → `wr-clear`
-   - bootstrap a new vault → `wr-setup`
-   - share access → `wr-add-user`
-   - fix legacy untagged secrets → `wr-migrate`
-5. **For `wr-save` / `wr-update` always pass `-Value`** — never let the script prompt interactively.
-6. **For `wr-clear` / `wr-delete` always pass `-Force`** — never let the script prompt interactively.
-7. **For multi-flavor vaults, always pass `-Flavor`** on `wr-load` unless you genuinely want every flavor. The collision warning is a signal that you should have.
-8. **After `wr-load` succeeds, cache the values** (they live in env vars for the rest of the session). Do not call `wr-load` again for the same `(Resource, Flavor)` pair.
+`./.env` (cwd) so subsequent tool calls can pick them up from disk; how
+to consume that file is up to the caller. `wr-clear -Force` removes both
+the in-process env vars and the fenced block from `./.env`.
 
 ## Troubleshooting
 
