@@ -4,6 +4,61 @@
 # Validation patterns - used across multiple scripts
 $script:ResourceNamePattern = '^[a-zA-Z][a-zA-Z0-9-]*$'
 $script:EnvVarNamePattern = '^[A-Za-z_][A-Za-z0-9_]*$'
+# Flavor names map to env-file suffixes (e.g. base, superset, py, js, net, java).
+# Lowercase, must start with a letter, may include digits and internal hyphens,
+# must not end with a hyphen so composed secret names never produce '--'.
+# `(?-i)` makes the regex case-sensitive even when used with PowerShell's
+# `-match` operator and the [ValidatePattern] attribute (both case-insensitive
+# by default).
+$script:FlavorNamePattern = '(?-i)^[a-z]([a-z0-9-]*[a-z0-9])?$'
+
+function Test-SecretTagsMatchFilter {
+    <#
+    .SYNOPSIS
+        Checks whether a secret's tags match the requested resource/flavor filters.
+    .DESCRIPTION
+        Returns $true when:
+        - No resource filter is specified, or the secret's 'resource' tag exactly
+          matches one of the requested resources.
+        - AND no flavor filter is specified, or the secret's 'flavor' tag exactly
+          matches one of the requested flavors.
+
+        Secrets without a 'resource' tag never match a non-empty resource filter.
+        Secrets without a 'flavor' tag never match a non-empty flavor filter
+        (legacy secrets created before the flavor convention are excluded when
+        callers explicitly ask for a flavor).
+    .PARAMETER Tags
+        The secret's tags object as returned by 'az keyvault secret list/show'
+        (may be $null for an untagged secret).
+    .PARAMETER ResourceFilters
+        Optional array of resource names to require. Empty array = no filter.
+    .PARAMETER FlavorFilters
+        Optional array of flavor names to require. Empty array = no filter.
+    #>
+    param(
+        [psobject]$Tags,
+
+        [string[]]$ResourceFilters = @(),
+
+        [string[]]$FlavorFilters = @()
+    )
+
+    if ($ResourceFilters.Count -gt 0) {
+        $secretResource = if ($Tags) { $Tags.resource } else { $null }
+        if ([string]::IsNullOrWhiteSpace($secretResource) -or $secretResource -notin $ResourceFilters) {
+            return $false
+        }
+    }
+
+    if ($FlavorFilters.Count -gt 0) {
+        $secretFlavor = if ($Tags) { $Tags.flavor } else { $null }
+        if ([string]::IsNullOrWhiteSpace($secretFlavor) -or $secretFlavor -notin $FlavorFilters) {
+            return $false
+        }
+    }
+
+    return $true
+}
 
 function ConvertTo-ShellEscapedSingleQuoted {
     <#

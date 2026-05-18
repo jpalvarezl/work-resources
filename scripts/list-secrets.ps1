@@ -4,23 +4,41 @@
     List all secrets in the Azure KeyVault.
 
 .DESCRIPTION
-    Displays all secrets from KeyVault, grouped by resource prefix.
-    Shows the environment variable name from the 'env-var-name' tag.
+    Displays all secrets from KeyVault, grouped by resource and then by flavor
+    (when flavors are present). Shows the environment variable name from the
+    'env-var-name' tag.
 
 .PARAMETER Resource
-    Filter to show only secrets with a specific resource prefix.
+    Optional: Filter by resource tag. Single value or comma-separated list,
+    e.g. -Resource "myapi" or -Resource "myapi,shared". When omitted, all
+    resources are shown.
+
+.PARAMETER Flavor
+    Optional: Filter by flavor tag. Single value or comma-separated list,
+    e.g. -Flavor "py" or -Flavor "py,js". When omitted, all flavors are shown
+    and grouped under each resource.
 
 .EXAMPLE
     ./list-secrets.ps1
-    Shows all secrets from KeyVault grouped by resource prefix.
+    Shows all secrets from KeyVault grouped by resource and flavor.
 
 .EXAMPLE
     ./list-secrets.ps1 -Resource myapp
-    Shows only secrets with names starting with 'myapp-'.
+    Shows only secrets with resource tag 'myapp'.
+
+.EXAMPLE
+    ./list-secrets.ps1 -Resource "myapp,shared"
+    Shows secrets for both 'myapp' and 'shared' resources.
+
+.EXAMPLE
+    ./list-secrets.ps1 -Resource foundry-sdk-deployment -Flavor py
+    Shows only secrets where resource='foundry-sdk-deployment' AND flavor='py'.
 #>
 
 param(
-    [string]$Resource
+    [string]$Resource,
+
+    [string]$Flavor
 )
 
 $ErrorActionPreference = "Stop"
@@ -76,77 +94,121 @@ if ($null -eq $secretsList -or $secretsList.Count -eq 0) {
     exit 0
 }
 
-# Filter by resource tag if specified
+# Parse filters
+$resourceFilters = @()
 if (-not [string]::IsNullOrWhiteSpace($Resource)) {
-    $secretsList = $secretsList | Where-Object { $_.tags -and $_.tags.resource -eq $Resource }
-    if ($secretsList.Count -eq 0) {
-        Write-Host "`n  No secrets found with resource tag '$Resource'." -ForegroundColor Red
-        Write-Host "  Run wr-list without -Resource to see all secrets.`n" -ForegroundColor DarkGray
-        exit 1
-    }
+    $resourceFilters = @($Resource -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+$flavorFilters = @()
+if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
+    $flavorFilters = @($Flavor -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 }
 
-# Group secrets by resource tag
+# Apply filters via the shared helper
+$secretsList = $secretsList | Where-Object {
+    Test-SecretTagsMatchFilter -Tags $_.tags -ResourceFilters $resourceFilters -FlavorFilters $flavorFilters
+}
+
+if ($null -eq $secretsList -or @($secretsList).Count -eq 0) {
+    $filterDesc = @()
+    if ($resourceFilters.Count -gt 0) { $filterDesc += "resource=$($resourceFilters -join ',')" }
+    if ($flavorFilters.Count -gt 0)   { $filterDesc += "flavor=$($flavorFilters -join ',')" }
+    $filterText = if ($filterDesc.Count -gt 0) { " matching $($filterDesc -join ' AND ')" } else { "" }
+    Write-Host "`n  No secrets found$filterText." -ForegroundColor Red
+    Write-Host "  Run wr-list without filters to see all secrets.`n" -ForegroundColor DarkGray
+    exit 1
+}
+
+# Group secrets by resource tag, then by flavor tag (within each resource)
 $secretsByResource = @{}
 
 foreach ($secret in $secretsList) {
     $secretName = $secret.name
-    
-    # Get resource from tag, default to "(untagged)" if missing
-    $resource = "(untagged)"
+
+    # Resource bucket
+    $resName = "(untagged)"
     if ($secret.tags -and $secret.tags.resource) {
-        $resource = $secret.tags.resource
+        $resName = $secret.tags.resource
     }
-    
-    if (-not $secretsByResource.ContainsKey($resource)) {
-        $secretsByResource[$resource] = @()
+
+    if (-not $secretsByResource.ContainsKey($resName)) {
+        $secretsByResource[$resName] = @{}
     }
-    
+
+    # Flavor sub-bucket inside the resource
+    $flvName = "(unflavored)"
+    if ($secret.tags -and $secret.tags.flavor) {
+        $flvName = $secret.tags.flavor
+    }
+
+    if (-not $secretsByResource[$resName].ContainsKey($flvName)) {
+        $secretsByResource[$resName][$flvName] = @()
+    }
+
     $envVarName = $null
     if ($secret.tags -and $secret.tags."env-var-name") {
         $envVarName = $secret.tags."env-var-name"
     }
-    
-    $secretsByResource[$resource] += @{
+
+    $secretsByResource[$resName][$flvName] += @{
         Name = $secretName
         EnvVarName = $envVarName
     }
 }
 
-# Display resources and secrets
+# Display: resource -> flavor -> secrets
 $totalSecrets = 0
 $missingTagCount = 0
 
 foreach ($resName in ($secretsByResource.Keys | Sort-Object)) {
-    $secrets = $secretsByResource[$resName]
-    
     Write-Host "`n+-- " -ForegroundColor DarkGray -NoNewline
     Write-Host $resName -ForegroundColor Yellow
-    
-    $secretList = @($secrets)
-    for ($i = 0; $i -lt $secretList.Count; $i++) {
-        $secret = $secretList[$i]
-        $isLast = ($i -eq $secretList.Count - 1)
-        $prefix = if ($isLast) { "+--" } else { "|--" }
-        
-        $totalSecrets++
-        
-        Write-Host "$prefix " -ForegroundColor DarkGray -NoNewline
-        Write-Host "$($secret.Name)" -ForegroundColor White -NoNewline
-        Write-Host " -> " -ForegroundColor DarkGray -NoNewline
-        
-        if ($secret.EnvVarName) {
-            Write-Host "`$env:$($secret.EnvVarName)" -ForegroundColor Cyan
-        } else {
-            Write-Host "(no env-var-name tag)" -ForegroundColor Red
-            $missingTagCount++
+
+    $flavorMap = $secretsByResource[$resName]
+    $flavorNames = $flavorMap.Keys | Sort-Object
+    # Skip the flavor sub-grouping when there's only one (unflavored) bucket —
+    # this preserves the original flat look for legacy/unflavored resources.
+    $showFlavorHeaders = -not (($flavorNames.Count -eq 1) -and ($flavorNames[0] -eq "(unflavored)"))
+
+    foreach ($flvName in $flavorNames) {
+        $secretList = @($flavorMap[$flvName])
+
+        if ($showFlavorHeaders) {
+            Write-Host "|  +-- " -ForegroundColor DarkGray -NoNewline
+            Write-Host "[$flvName]" -ForegroundColor Magenta
+        }
+
+        for ($i = 0; $i -lt $secretList.Count; $i++) {
+            $secret = $secretList[$i]
+            $isLast = ($i -eq $secretList.Count - 1)
+
+            if ($showFlavorHeaders) {
+                $prefix = if ($isLast) { "|     +--" } else { "|     |--" }
+            } else {
+                $prefix = if ($isLast) { "+--" } else { "|--" }
+            }
+
+            $totalSecrets++
+
+            Write-Host "$prefix " -ForegroundColor DarkGray -NoNewline
+            Write-Host "$($secret.Name)" -ForegroundColor White -NoNewline
+            Write-Host " -> " -ForegroundColor DarkGray -NoNewline
+
+            if ($secret.EnvVarName) {
+                Write-Host "`$env:$($secret.EnvVarName)" -ForegroundColor Cyan
+            } else {
+                Write-Host "(no env-var-name tag)" -ForegroundColor Red
+                $missingTagCount++
+            }
         }
     }
 }
 
 # Summary
+$resCount = $secretsByResource.Keys.Count
+$flvCount = ($secretsByResource.Values | ForEach-Object { $_.Keys } | Sort-Object -Unique).Count
 Write-Host "`n-----------------------------------------" -ForegroundColor DarkGray
-Write-Host "Total: $totalSecrets secret(s) in $($secretsByResource.Keys.Count) resource(s)" -ForegroundColor DarkGray
+Write-Host "Total: $totalSecrets secret(s) in $resCount resource(s), $flvCount flavor(s)" -ForegroundColor DarkGray
 
 if ($missingTagCount -gt 0) {
     Write-Host "  [!] $missingTagCount secret(s) missing 'env-var-name' tag" -ForegroundColor Yellow
