@@ -18,6 +18,12 @@
 .PARAMETER All
     Delete all secrets with names starting with the specified resource prefix.
 
+.PARAMETER Flavor
+    Optional: Restrict the operation to secrets tagged with the given flavor.
+    For single delete (-Name), the secret name becomes "{Resource}-{Flavor}-{Name}"
+    and the secret's 'flavor' tag must match before deletion proceeds.
+    For -All, this is an additional filter (comma-separated list allowed).
+
 .PARAMETER Force
     Skip confirmation prompt.
 
@@ -27,11 +33,19 @@
 
 .EXAMPLE
     ./delete-secret.ps1 -Resource myapp -All
-    Deletes all secrets with names starting with 'myapp-' after confirmation.
+    Deletes all secrets with resource tag 'myapp' after confirmation.
 
 .EXAMPLE
     ./delete-secret.ps1 -Resource myapp -Name api-key -Force
     Deletes without confirmation prompt.
+
+.EXAMPLE
+    ./delete-secret.ps1 -Resource foundry-sdk-deployment -Flavor py -Name foundry-project-endpoint
+    Deletes 'foundry-sdk-deployment-py-foundry-project-endpoint', verifying flavor=py tag first.
+
+.EXAMPLE
+    ./delete-secret.ps1 -Resource foundry-sdk-deployment -All -Flavor py -Force
+    Deletes every secret tagged resource='foundry-sdk-deployment' AND flavor='py'.
 #>
 
 param(
@@ -44,8 +58,19 @@ param(
     
     [switch]$All,
     
-    [switch]$Force
+    [switch]$Force,
+
+    [string]$Flavor
 )
+
+# Validate Flavor format if provided (comma-list pattern for -All, single value for -Name).
+if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
+    foreach ($f in ($Flavor -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+        if ($f -notmatch '^[a-z]([a-z0-9-]*[a-z0-9])?$') {
+            throw "Invalid flavor '$f'. Must be lowercase, start with a letter, and contain only letters, digits, and internal hyphens."
+        }
+    }
+}
 
 # Validate parameters
 if (-not $All -and -not $Name) {
@@ -147,40 +172,69 @@ Assert-SecretsOfficerRole -VaultName $settings.vaultName -ResourceGroupName $set
 $secretsToDelete = @()
 
 if ($All) {
-    # List all secrets from vault and filter by resource tag
-    Write-Step "Finding secrets with resource tag '$Resource'..."
+    # List all secrets from vault and filter by resource tag (and optional flavor)
+    $flavorFilters = @()
+    if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
+        $flavorFilters = @($Flavor -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        Write-Step "Finding secrets with resource tag '$Resource' AND flavor in ($($flavorFilters -join ', '))..."
+    } else {
+        Write-Step "Finding secrets with resource tag '$Resource'..."
+    }
     
     $allSecrets = az keyvault secret list --vault-name $settings.vaultName --query "[].{name:name, tags:tags}" -o json 2>$null | ConvertFrom-Json
     
     foreach ($secret in $allSecrets) {
-        if ($secret.tags -and $secret.tags.resource -eq $Resource) {
-            $envVarName = if ($secret.tags."env-var-name") { $secret.tags."env-var-name" } else { $null }
-            $secretsToDelete += @{
-                SecretName = $secret.name
-                EnvVarName = $envVarName
-            }
+        if (-not (Test-SecretTagsMatchFilter -Tags $secret.tags -ResourceFilters @($Resource) -FlavorFilters $flavorFilters)) {
+            continue
+        }
+        $envVarName = if ($secret.tags."env-var-name") { $secret.tags."env-var-name" } else { $null }
+        $secretsToDelete += @{
+            SecretName = $secret.name
+            EnvVarName = $envVarName
         }
     }
     
     if ($secretsToDelete.Count -eq 0) {
-        Write-Err "No secrets found with resource tag '$Resource' in vault."
+        $filterDesc = "resource tag '$Resource'"
+        if ($flavorFilters.Count -gt 0) { $filterDesc += " AND flavor in ($($flavorFilters -join ', '))" }
+        Write-Err "No secrets found with $filterDesc in vault."
         Write-Host "  Run wr-list to see available secrets.`n" -ForegroundColor DarkGray
         exit 1
     }
 } else {
-    $secretName = "$Resource-$Name"
-    
-    # Check if secret exists in KeyVault
+    # Single delete. When -Flavor is supplied, embed it in the composed name AND
+    # verify the secret's tags before removing it, so we never silently nuke a
+    # legacy secret that happens to share the composed name.
+    if ([string]::IsNullOrWhiteSpace($Flavor)) {
+        $secretName = "$Resource-$Name"
+    } else {
+        $secretName = "$Resource-$Flavor-$Name"
+    }
+
     Write-Step "Checking if secret exists..."
-    $secretExistsInVault = Test-SecretExistsInVault -VaultName $settings.vaultName -SecretName $secretName
-    
-    if (-not $secretExistsInVault) {
+    $secretFull = az keyvault secret show --vault-name $settings.vaultName --name $secretName 2>$null | ConvertFrom-Json
+
+    if (-not $secretFull) {
         Write-Err "Secret '$secretName' not found in KeyVault '$($settings.vaultName)'."
         Write-Host "`n  The secret may have already been deleted or never existed.`n" -ForegroundColor DarkGray
         exit 1
     }
-    
-    $envVarName = Get-SecretEnvVarName -VaultName $settings.vaultName -SecretName $secretName
+
+    # Safety check: when -Flavor is supplied, refuse to delete a secret whose
+    # tags don't actually carry that flavor (or whose resource tag mismatches).
+    if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
+        $actualResource = if ($secretFull.tags) { $secretFull.tags.resource } else { $null }
+        $actualFlavor = if ($secretFull.tags) { $secretFull.tags.flavor } else { $null }
+        if ($actualResource -ne $Resource -or $actualFlavor -ne $Flavor) {
+            Write-Err "Tag verification failed for '$secretName':"
+            Write-Host "  expected resource='$Resource', flavor='$Flavor'" -ForegroundColor DarkGray
+            Write-Host "  actual   resource='$actualResource', flavor='$actualFlavor'" -ForegroundColor DarkGray
+            Write-Host "`n  Refusing to delete. Use the unflavored form or correct -Flavor.`n" -ForegroundColor DarkGray
+            exit 1
+        }
+    }
+
+    $envVarName = if ($secretFull.tags -and $secretFull.tags.'env-var-name') { $secretFull.tags.'env-var-name' } else { $null }
     
     $secretsToDelete += @{
         SecretName = $secretName

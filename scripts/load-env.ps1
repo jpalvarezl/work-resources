@@ -14,6 +14,13 @@
     - Multiple: -Resource "resourceA,resourceB"
     - All (default if omitted): loads all secrets from the vault
 
+.PARAMETER Flavor
+    Optional: Filter by flavor tag. Can be a single value or comma-separated
+    list, e.g. -Flavor "py" or -Flavor "py,js". When omitted, secrets are not
+    filtered by flavor (legacy secrets without a flavor tag remain included).
+    When specified, only secrets whose 'flavor' tag matches one of the requested
+    flavors are loaded; legacy untagged secrets are excluded.
+
 .PARAMETER Export
     Output shell-compatible export commands instead of setting vars in PowerShell.
     Supported values: fish, bash, zsh, powershell
@@ -31,7 +38,11 @@
 
 .EXAMPLE
     ./load-env.ps1 -Resource myapp
-    Loads secrets with names starting with 'myapp-' into current session.
+    Loads secrets with resource tag 'myapp' into current session.
+
+.EXAMPLE
+    ./load-env.ps1 -Resource foundry-sdk-deployment -Flavor py
+    Loads only secrets whose resource='foundry-sdk-deployment' AND flavor='py'.
 
 .EXAMPLE
     eval (pwsh ./scripts/load-env.ps1 -Resource myapp -Export fish)
@@ -45,6 +56,9 @@
 param(
     [Parameter(Mandatory = $false)]
     [string]$Resource,
+
+    [Parameter(Mandatory = $false)]
+    [string]$Flavor,
     
     [ValidateSet("fish", "bash", "zsh", "powershell", "")]
     [string]$Export = "",
@@ -131,8 +145,15 @@ Write-Step "Loading secrets from vault: $($settings.vaultName)"
 # Parse resource filter (if provided)
 $resourceFilters = @()
 if (-not [string]::IsNullOrWhiteSpace($Resource)) {
-    $resourceFilters = $Resource -split "," | ForEach-Object { $_.Trim() }
+    $resourceFilters = @($Resource -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     Write-Info "Filtering by resource(s): $($resourceFilters -join ', ')"
+}
+
+# Parse flavor filter (if provided)
+$flavorFilters = @()
+if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
+    $flavorFilters = @($Flavor -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    Write-Info "Filtering by flavor(s): $($flavorFilters -join ', ')"
 }
 
 # List all secrets from KeyVault with their tags
@@ -144,30 +165,51 @@ if ($null -eq $secretsList -or $secretsList.Count -eq 0) {
     exit 0
 }
 
-# Filter secrets by resource tag if specified
+# Filter secrets by resource + flavor tags
 $secretsToLoad = @()
+$secretNameToTags = @{}
 foreach ($secret in $secretsList) {
-    if ($resourceFilters.Count -gt 0) {
-        $secretResource = $null
-        if ($secret.tags -and $secret.tags.resource) {
-            $secretResource = $secret.tags.resource
-        }
-        
-        if ($secretResource -notin $resourceFilters) {
-            continue
-        }
+    if (Test-SecretTagsMatchFilter -Tags $secret.tags -ResourceFilters $resourceFilters -FlavorFilters $flavorFilters) {
+        $secretsToLoad += $secret.name
+        $secretNameToTags[$secret.name] = $secret.tags
     }
-    $secretsToLoad += $secret.name
 }
 
 if ($secretsToLoad.Count -eq 0) {
-    Write-Warn "No secrets found matching the specified resource filter(s)."
-    Write-Stderr "  Use wr-list to see available resources and secrets."
+    Write-Warn "No secrets found matching the specified filter(s)."
+    Write-Stderr "  Use wr-list to see available secrets, resources, and flavors."
     exit 0
 }
 
 if ($resourceFilters.Count -gt 1) {
     Write-Warn "Loading from multiple resources - secrets with colliding environment variable names will be overwritten."
+}
+
+# Pre-flight collision detection: same env-var-name across multiple flavors/secrets
+# will overwrite each other in the resulting environment. Warn explicitly so the
+# user can disambiguate with -Flavor if needed.
+$envVarNameToSecrets = @{}
+foreach ($secretName in $secretsToLoad) {
+    $tags = $secretNameToTags[$secretName]
+    if ($tags -and $tags.'env-var-name') {
+        $evn = $tags.'env-var-name'
+        if (-not $envVarNameToSecrets.ContainsKey($evn)) {
+            $envVarNameToSecrets[$evn] = @()
+        }
+        $envVarNameToSecrets[$evn] += $secretName
+    }
+}
+foreach ($evn in $envVarNameToSecrets.Keys) {
+    $secrets = $envVarNameToSecrets[$evn]
+    if ($secrets.Count -gt 1) {
+        Write-Warn "Multiple secrets map to `$env:$evn (last loaded wins):"
+        foreach ($s in $secrets) {
+            $flv = $secretNameToTags[$s].'flavor'
+            $flvLabel = if ($flv) { "[flavor=$flv]" } else { "[no flavor]" }
+            Write-Stderr ("       - {0} {1}" -f $s, $flvLabel)
+        }
+        Write-Stderr "       Use -Flavor to disambiguate."
+    }
 }
 
 # Fetch secrets from KeyVault

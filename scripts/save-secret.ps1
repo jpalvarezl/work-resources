@@ -25,6 +25,13 @@
     Must start with a letter or underscore and contain only letters, numbers, 
     and underscores (e.g., "OPENAI_API_KEY", "DATABASE_URL").
 
+.PARAMETER Flavor
+    Optional: A flavor label used to disambiguate secrets that mirror multiple
+    files (e.g. ".env" -> "base", ".py.env" -> "py", ".superset.env" -> "superset").
+    When provided, the secret name becomes "{Resource}-{Flavor}-{Name}" and a
+    'flavor' tag is added. Must be lowercase, start with a letter, and contain
+    only letters, digits, and internal hyphens.
+
 .EXAMPLE
     ./save-secret.ps1 -Resource myapp -Name api-key -EnvVarName "MYAPP_API_KEY"
     Prompts for the value interactively (secure, not in shell history).
@@ -36,6 +43,11 @@
 .EXAMPLE
     ./save-secret.ps1 -Resource shared -Name openai-key -EnvVarName "OPENAI_API_KEY"
     Multiple resources can use the same env var name if desired.
+
+.EXAMPLE
+    ./save-secret.ps1 -Resource foundry-sdk-deployment -Flavor py -Name foundry-project-endpoint -EnvVarName FOUNDRY_PROJECT_ENDPOINT
+    Saves as 'foundry-sdk-deployment-py-foundry-project-endpoint' with flavor=py tag,
+    so 'wr-load -Resource foundry-sdk-deployment -Flavor py' selects it.
 #>
 
 param(
@@ -51,7 +63,10 @@ param(
     
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^[A-Za-z_][A-Za-z0-9_]*$')]
-    [string]$EnvVarName
+    [string]$EnvVarName,
+
+    [ValidatePattern('^[a-z]([a-z0-9-]*[a-z0-9])?$')]
+    [string]$Flavor
 )
 
 $ErrorActionPreference = "Stop"
@@ -144,10 +159,19 @@ $settings = Get-Settings
 # Verify write access
 Assert-SecretsOfficerRole -VaultName $settings.vaultName -ResourceGroupName $settings.resourceGroupName
 
-# Build the full secret name
-$secretName = "$Resource-$Name"
+# Build the full secret name. When a flavor is supplied, embed it between
+# the resource and the user-supplied name so the same env var can coexist
+# across flavors of the same resource without colliding on KV name.
+if ([string]::IsNullOrWhiteSpace($Flavor)) {
+    $secretName = "$Resource-$Name"
+} else {
+    $secretName = "$Resource-$Flavor-$Name"
+}
 Write-Info "Secret name in vault: $secretName"
 Write-Info "Environment variable: $EnvVarName"
+if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
+    Write-Info "Flavor: $Flavor"
+}
 
 # Get the secret value
 if ([string]::IsNullOrWhiteSpace($Value)) {
@@ -164,11 +188,16 @@ if ([string]::IsNullOrWhiteSpace($Value)) {
 Write-Step "Saving secret to KeyVault '$($settings.vaultName)'..."
 
 try {
+    $tagArgs = @("resource=$Resource", "env-var-name=$EnvVarName")
+    if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
+        $tagArgs += "flavor=$Flavor"
+    }
+
     az keyvault secret set `
         --vault-name $settings.vaultName `
         --name $secretName `
         --value $Value `
-        --tags "resource=$Resource" "env-var-name=$EnvVarName" | Out-Null
+        --tags @tagArgs | Out-Null
     
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to save secret to KeyVault"
@@ -189,9 +218,16 @@ Write-Host "+==============================================================+" -F
 
 Write-Host "`nDetails:" -ForegroundColor Yellow
 Write-Host "  Resource:      $Resource" -ForegroundColor White
+if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
+    Write-Host "  Flavor:        $Flavor" -ForegroundColor White
+}
 Write-Host "  Secret name:   $secretName" -ForegroundColor White
 Write-Host "  Env variable:  $EnvVarName" -ForegroundColor White
 
 Write-Host "`nTo load this secret:" -ForegroundColor Yellow
-Write-Host "  wr-load -Resource $Resource" -ForegroundColor White
+if ([string]::IsNullOrWhiteSpace($Flavor)) {
+    Write-Host "  wr-load -Resource $Resource" -ForegroundColor White
+} else {
+    Write-Host "  wr-load -Resource $Resource -Flavor $Flavor" -ForegroundColor White
+}
 Write-Host ""

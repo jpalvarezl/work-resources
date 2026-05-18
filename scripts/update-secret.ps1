@@ -28,6 +28,11 @@
     Usage for fish:   eval (pwsh ./scripts/update-secret.ps1 -Resource azure-agents -Name azure-agents-endpoint -Export fish)
     Usage for bash:   eval "$(pwsh ./scripts/update-secret.ps1 -Resource azure-agents -Name azure-agents-endpoint -Export bash)"
 
+.PARAMETER Flavor
+    Optional: Update the secret's 'flavor' tag. If omitted, the existing flavor
+    tag (if any) is preserved. Must be lowercase, start with a letter, and
+    contain only letters, digits, and internal hyphens.
+
 .EXAMPLE
     ./update-secret.ps1 -Resource azure-agents -Name azure-agents-endpoint
     Prompts for the new value, keeps existing tags, updates current session.
@@ -39,6 +44,10 @@
 .EXAMPLE
     ./update-secret.ps1 -Resource myapp -Name myapp-api-key -EnvVarName "NEW_ENV_VAR"
     Updates the env var name tag, prompts for a new value.
+
+.EXAMPLE
+    ./update-secret.ps1 -Resource foundry-sdk-deployment -Name foundry-sdk-deployment-py-foundry-project-endpoint -Flavor py -Value "..."
+    Updates the value and ensures the flavor tag is 'py'.
 #>
 
 param(
@@ -56,7 +65,10 @@ param(
     [string]$EnvVarName,
     
     [ValidateSet("fish", "bash", "zsh", "powershell", "")]
-    [string]$Export = ""
+    [string]$Export = "",
+
+    [ValidatePattern('^[a-z]([a-z0-9-]*[a-z0-9])?$')]
+    [string]$Flavor
 )
 
 $ErrorActionPreference = "Stop"
@@ -181,6 +193,7 @@ try {
 
 # Get the existing env-var-name tag if EnvVarName not provided
 $existingEnvVarName = $existingSecret.tags.'env-var-name'
+$existingFlavor = $existingSecret.tags.'flavor'
 
 if ([string]::IsNullOrWhiteSpace($EnvVarName)) {
     if ([string]::IsNullOrWhiteSpace($existingEnvVarName)) {
@@ -199,6 +212,21 @@ if ([string]::IsNullOrWhiteSpace($EnvVarName)) {
     }
 }
 
+# Preserve the existing flavor tag unless -Flavor was supplied. Without this,
+# rewriting tags would drop the flavor and break flavor-based filtering.
+if ([string]::IsNullOrWhiteSpace($Flavor)) {
+    if (-not [string]::IsNullOrWhiteSpace($existingFlavor)) {
+        $Flavor = $existingFlavor
+        Write-Info "Preserving existing flavor: $Flavor"
+    }
+} else {
+    if ($existingFlavor -and $Flavor -ne $existingFlavor) {
+        Write-Info "Changing flavor: $existingFlavor -> $Flavor"
+    } else {
+        Write-Info "Flavor: $Flavor"
+    }
+}
+
 # Get the secret value
 if ([string]::IsNullOrWhiteSpace($Value)) {
     Write-Stderr ""
@@ -214,11 +242,16 @@ if ([string]::IsNullOrWhiteSpace($Value)) {
 Write-Step "Updating secret in KeyVault '$($settings.vaultName)'..."
 
 try {
+    $tagArgs = @("resource=$Resource", "env-var-name=$EnvVarName")
+    if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
+        $tagArgs += "flavor=$Flavor"
+    }
+
     az keyvault secret set `
         --vault-name $settings.vaultName `
         --name $secretName `
         --value $Value `
-        --tags "resource=$Resource" "env-var-name=$EnvVarName" | Out-Null
+        --tags @tagArgs | Out-Null
     
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to update secret in KeyVault"
@@ -236,6 +269,9 @@ if ($Export) {
     # Output shell-compatible export command
     Write-Stderr "`n[SUCCESS] Secret updated and exported to current session"
     Write-Stderr "  Resource:      $Resource"
+    if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
+        Write-Stderr "  Flavor:        $Flavor"
+    }
     Write-Stderr "  Secret name:   $secretName"
     Write-Stderr "  Env variable:  $EnvVarName"
     
@@ -289,6 +325,9 @@ if ($Export) {
 
     Write-Host "`nDetails:" -ForegroundColor Yellow
     Write-Host "  Resource:      $Resource" -ForegroundColor White
+    if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
+        Write-Host "  Flavor:        $Flavor" -ForegroundColor White
+    }
     Write-Host "  Secret name:   $secretName" -ForegroundColor White
     Write-Host "  Env variable:  $EnvVarName" -ForegroundColor White
     Write-Host "  Session:       Updated in current shell" -ForegroundColor White

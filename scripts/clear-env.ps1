@@ -11,6 +11,13 @@
 .PARAMETER Resource
     Clear only secrets for a specific resource prefix. If not specified, clears all.
 
+.PARAMETER Flavor
+    Optional: Restrict which env vars to clear to those tagged with the given
+    flavor(s). Single value or comma-separated list. Note: this narrows the
+    KeyVault-defined env var names to consider; it does not verify which
+    flavor actually populated a given env var in the current session (the OS
+    does not retain that provenance).
+
 .PARAMETER Force
     Skip confirmation prompt.
 
@@ -26,7 +33,11 @@
 
 .EXAMPLE
     ./clear-env.ps1 -Resource myapp
-    Clears only secrets with names starting with 'myapp-'.
+    Clears only env vars whose KV secrets are tagged resource='myapp'.
+
+.EXAMPLE
+    ./clear-env.ps1 -Resource foundry-sdk-deployment -Flavor py
+    Clears only env vars whose secrets are tagged resource='foundry-sdk-deployment' AND flavor='py'.
 
 .EXAMPLE
     ./clear-env.ps1 -Force
@@ -35,6 +46,7 @@
 
 param(
     [string]$Resource,
+    [string]$Flavor,
     [switch]$Force,
     [ValidateSet("fish", "bash", "zsh", "powershell", "")]
     [string]$Export = ""
@@ -96,15 +108,29 @@ if ($null -eq $secretsList -or $secretsList.Count -eq 0) {
     exit 0
 }
 
-# Filter by resource tag if specified
+# Filter by resource and flavor tags via shared helper
+$resourceFilters = @()
 if (-not [string]::IsNullOrWhiteSpace($Resource)) {
-    $secretsList = $secretsList | Where-Object { $_.tags -and $_.tags.resource -eq $Resource }
-    if ($secretsList.Count -eq 0) {
-        if (-not $SilentMode) {
-            Write-Host "`n  No secrets found with resource tag '$Resource'." -ForegroundColor Red
-        }
-        exit 1
+    $resourceFilters = @($Resource -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+$flavorFilters = @()
+if (-not [string]::IsNullOrWhiteSpace($Flavor)) {
+    $flavorFilters = @($Flavor -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
+$secretsList = $secretsList | Where-Object {
+    Test-SecretTagsMatchFilter -Tags $_.tags -ResourceFilters $resourceFilters -FlavorFilters $flavorFilters
+}
+
+if ($null -eq $secretsList -or @($secretsList).Count -eq 0) {
+    if (-not $SilentMode) {
+        $filterDesc = @()
+        if ($resourceFilters.Count -gt 0) { $filterDesc += "resource=$($resourceFilters -join ',')" }
+        if ($flavorFilters.Count -gt 0)   { $filterDesc += "flavor=$($flavorFilters -join ',')" }
+        $filterText = if ($filterDesc.Count -gt 0) { " matching $($filterDesc -join ' AND ')" } else { "" }
+        Write-Host "`n  No secrets found$filterText." -ForegroundColor Red
     }
+    exit 1
 }
 
 # Collect all env vars to clear from tags

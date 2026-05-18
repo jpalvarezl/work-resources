@@ -185,7 +185,7 @@ When creating a **new** vault, you're automatically assigned the Admin role (Key
 Add or update a secret in KeyVault.
 
 ```powershell
-wr-save -Resource <name> -Name <secret-name> -EnvVarName <env-var> [-Value <value>]
+wr-save -Resource <name> -Name <secret-name> -EnvVarName <env-var> [-Value <value>] [-Flavor <flavor>]
 ```
 
 | Parameter | Required | Description |
@@ -194,18 +194,24 @@ wr-save -Resource <name> -Name <secret-name> -EnvVarName <env-var> [-Value <valu
 | `-Name` | Yes | Secret name (e.g., "api-key", "connection-string"). Same naming rules as Resource. |
 | `-EnvVarName` | Yes | Environment variable name (e.g., "MYAPI_API_KEY"). Must start with a letter/underscore and contain only letters, numbers, and underscores. |
 | `-Value` | No | Secret value (prompts if not provided) |
+| `-Flavor` | No | Optional flavor label (e.g., "py", "base", "superset"). When set, secret name becomes `{Resource}-{Flavor}-{Name}` and a `flavor` tag is added so `wr-load -Flavor <name>` can filter. Must be lowercase, start with a letter, and contain only letters, digits, and internal hyphens. |
 
-**Naming**: The secret is stored in KeyVault as `{resource}-{name}` with an `env-var-name` tag.
+**Naming**: The secret is stored in KeyVault as `{resource}-{name}` (or `{resource}-{flavor}-{name}` when `-Flavor` is set) with an `env-var-name` tag.
 - Example: `wr-save -Resource myapi -Name api-key -EnvVarName MYAPI_API_KEY`
 - KeyVault secret name: `myapi-api-key`
 - Tag: `env-var-name=MYAPI_API_KEY`
+
+With flavor:
+- Example: `wr-save -Resource foundry-sdk-deployment -Flavor py -Name foundry-project-endpoint -EnvVarName FOUNDRY_PROJECT_ENDPOINT`
+- KeyVault secret name: `foundry-sdk-deployment-py-foundry-project-endpoint`
+- Tags: `resource=foundry-sdk-deployment`, `flavor=py`, `env-var-name=FOUNDRY_PROJECT_ENDPOINT`
 
 ### `wr-update`
 
 Update an existing secret in KeyVault. The `-Name` parameter is the actual KeyVault secret name. The updated value is also set in your current shell session.
 
 ```powershell
-wr-update -Resource <resource> -Name <secret-name> [-EnvVarName <env-var>] [-Value <value>]
+wr-update -Resource <resource> -Name <secret-name> [-EnvVarName <env-var>] [-Value <value>] [-Flavor <flavor>]
 ```
 
 | Parameter | Required | Description |
@@ -214,12 +220,14 @@ wr-update -Resource <resource> -Name <secret-name> [-EnvVarName <env-var>] [-Val
 | `-Name` | Yes | The actual secret name in KeyVault (e.g., "azure-agents-endpoint") |
 | `-EnvVarName` | No | Update the environment variable name tag (keeps existing if omitted) |
 | `-Value` | No | New secret value (prompts if not provided) |
+| `-Flavor` | No | Update the `flavor` tag. Preserves the existing flavor if omitted. |
 
 **Examples**:
 ```powershell
 wr-update -Resource azure-agents -Name azure-agents-endpoint                  # Prompt for new value
 wr-update -Resource azure-agents -Name azure-agents-endpoint -Value "newval"  # Set value directly
 wr-update -Resource myapp -Name myapp-api-key -EnvVarName "NEW_VAR"           # Also change env var name
+wr-update -Resource foundry-sdk-deployment -Name foundry-sdk-deployment-py-foundry-project-endpoint -Flavor py -Value "..."
 ```
 
 ### `wr-load`
@@ -227,30 +235,48 @@ wr-update -Resource myapp -Name myapp-api-key -EnvVarName "NEW_VAR"           # 
 Load secrets into current session as environment variables.
 
 ```powershell
-wr-load [-Resource <name>] [-Export <shell>] [-SpawnShell]
+wr-load [-Resource <name>] [-Flavor <flavor>] [-Export <shell>] [-SpawnShell]
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `-Resource` | No | Resource prefix(es) to filter (loads all if omitted) |
+| `-Flavor` | No | Flavor(s) to filter, comma-separated. When set, only secrets whose `flavor` tag matches are loaded; legacy untagged secrets are excluded. |
 | `-Export` | No | Output format: `bash`, `zsh`, `fish`, `powershell` |
 | `-SpawnShell` | No | Spawn new shell with secrets (isolated) |
 
 **Examples**:
 ```powershell
-wr-load                                    # Load all secrets
-wr-load -Resource myapi                    # Filter by prefix
-wr-load -Resource "myapi,shared"           # Multiple prefixes
-wr-load -Resource myapi -SpawnShell        # Isolated shell
+wr-load                                              # Load all secrets
+wr-load -Resource myapi                              # Filter by resource
+wr-load -Resource "myapi,shared"                     # Multiple resources
+wr-load -Resource foundry-sdk-deployment -Flavor py  # Resource + flavor
+wr-load -Resource foundry-sdk-deployment -Flavor "py,js"
+wr-load -Resource myapi -SpawnShell                  # Isolated shell
 ```
+
+When `-Flavor` is omitted and the selected secrets contain multiple flavors mapping
+to the same env var name (e.g., `FOUNDRY_PROJECT_ENDPOINT` in both `.env` and
+`.py.env`), `wr-load` prints a collision warning and the last-loaded value wins.
+Use `-Flavor` to disambiguate.
 
 ### `wr-list`
 
-Display secrets in KeyVault.
+Display secrets in KeyVault, grouped by resource and then by flavor.
 
 ```powershell
-wr-list                     # List all secrets from KeyVault
-wr-list -Resource myapi     # Filter by resource prefix
+wr-list [-Resource <name>] [-Flavor <flavor>]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-Resource` | No | Filter by resource tag |
+| `-Flavor` | No | Filter by flavor tag (comma-separated list allowed) |
+
+```powershell
+wr-list                                              # All secrets, grouped by resource and flavor
+wr-list -Resource myapi                              # Filter by resource
+wr-list -Resource foundry-sdk-deployment -Flavor py  # Resource + flavor
 ```
 
 ### `wr-clear`
@@ -259,17 +285,26 @@ Remove loaded secrets from current session.
 
 ```powershell
 wr-clear                    # Clear all (prompts)
-wr-clear -Resource myapi    # Clear specific resource
+wr-clear -Resource myapi    # Clear by resource
+wr-clear -Resource foundry-sdk-deployment -Flavor py
 wr-clear -Force             # Skip confirmation
 ```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-Resource` | No | Restrict to env vars whose secrets are tagged with the given resource |
+| `-Flavor` | No | Restrict to env vars whose secrets are tagged with the given flavor(s) |
+| `-Force` | No | Skip confirmation |
+
+> **Note:** `-Flavor` narrows the *configured* env var names to clear. The OS does not record which flavor originally populated an env var, so if you loaded `FOUNDRY_PROJECT_ENDPOINT` from `flavor=java` and then run `wr-clear -Flavor py`, the var will still be unset (the configured name matches).
 
 ### `wr-delete`
 
 Delete secrets from KeyVault.
 
 ```powershell
-wr-delete -Resource <name> -Name <secret-name> [-Force]
-wr-delete -Resource <name> -All [-Force]
+wr-delete -Resource <name> -Name <secret-name> [-Flavor <flavor>] [-Force]
+wr-delete -Resource <name> -All [-Flavor <flavor>] [-Force]
 ```
 
 | Parameter | Required | Description |
@@ -277,13 +312,16 @@ wr-delete -Resource <name> -All [-Force]
 | `-Resource` | Yes | Resource prefix |
 | `-Name` | No* | Secret name to delete (*required unless -All is used) |
 | `-All` | No | Delete all secrets with the resource prefix |
+| `-Flavor` | No | When used with `-Name`: composes `{Resource}-{Flavor}-{Name}` and verifies the secret's `flavor` tag matches before deleting. When used with `-All`: filters to secrets whose `flavor` tag matches (comma-separated list allowed). |
 | `-Force` | No | Skip confirmation prompt |
 
 **Examples**:
 ```powershell
-wr-delete -Resource myapi -Name api-key    # Delete single secret
-wr-delete -Resource myapi -All             # Delete all myapi-* secrets
-wr-delete -Resource myapi -All -Force      # No confirmation
+wr-delete -Resource myapi -Name api-key                                  # Delete single secret
+wr-delete -Resource myapi -All                                           # Delete all myapi-* secrets
+wr-delete -Resource myapi -All -Force                                    # No confirmation
+wr-delete -Resource foundry-sdk-deployment -Flavor py -Name endpoint     # Delete foundry-sdk-deployment-py-endpoint (verifies tags)
+wr-delete -Resource foundry-sdk-deployment -All -Flavor py -Force        # Delete every py-flavored secret in foundry-sdk-deployment
 ```
 
 ### `wr-add-user`
@@ -319,6 +357,70 @@ The tool uses Azure RBAC with two roles:
 - **Vault creator** is always assigned Admin automatically
 - **Team members** joining an existing vault get User (read-only) by default
 - Admins can promote others with `wr-add-user -Email user@company.com -Role Admin`
+
+## Flavors: mirroring multi-file env structures
+
+When a project keeps several env files in one folder — e.g.
+
+```
+.azure/foundry-sdk-deployment/
+├── .env
+├── .superset.env
+├── .java.env
+├── .js.env
+├── .net.env
+└── .py.env
+```
+
+the same env var (say `FOUNDRY_PROJECT_ENDPOINT`) may appear in multiple files
+with different intended audiences. The `-Flavor` parameter lets you store each
+file's content separately and then load exactly the subset you need.
+
+**Convention**: filename suffix → flavor label.
+
+| File | Flavor |
+|------|--------|
+| `.env` | `base` |
+| `.superset.env` | `superset` |
+| `.py.env` | `py` |
+| `.js.env` | `js` |
+| `.net.env` | `net` |
+| `.java.env` | `java` |
+
+A flavor must be lowercase, start with a letter, and contain only letters,
+digits, and internal hyphens (`^[a-z]([a-z0-9-]*[a-z0-9])?$`).
+
+When `-Flavor` is set on `wr-save`, the secret name becomes
+`{resource}-{flavor}-{name}` and a `flavor` tag is added alongside `resource`
+and `env-var-name`. `wr-load`, `wr-list`, `wr-clear`, and `wr-delete` all accept
+`-Flavor` to filter by it. Legacy secrets without a `flavor` tag continue to
+work; they are simply excluded when `-Flavor` is explicitly requested.
+
+**Example workflow** for the directory above:
+
+```powershell
+# Save FOUNDRY_PROJECT_ENDPOINT once per flavor it appears in
+wr-save -Resource foundry-sdk-deployment -Flavor base     -Name foundry-project-endpoint -EnvVarName FOUNDRY_PROJECT_ENDPOINT
+wr-save -Resource foundry-sdk-deployment -Flavor superset -Name foundry-project-endpoint -EnvVarName FOUNDRY_PROJECT_ENDPOINT
+wr-save -Resource foundry-sdk-deployment -Flavor py       -Name foundry-project-endpoint -EnvVarName FOUNDRY_PROJECT_ENDPOINT
+
+# Load only what .py.env contained
+wr-load -Resource foundry-sdk-deployment -Flavor py
+
+# Load .env's worth (the azd outputs)
+wr-load -Resource foundry-sdk-deployment -Flavor base
+
+# Inspect what's stored, grouped by flavor under each resource
+wr-list -Resource foundry-sdk-deployment
+
+# Delete every py-flavored secret for this deployment
+wr-delete -Resource foundry-sdk-deployment -All -Flavor py -Force
+```
+
+> **Collision warning**: If you call `wr-load -Resource X` without `-Flavor` and
+> the matched secrets contain the same env var name across multiple flavors,
+> `wr-load` prints a warning and the last-loaded value wins. Use `-Flavor` to
+> disambiguate.
 
 ## Project Structure
 

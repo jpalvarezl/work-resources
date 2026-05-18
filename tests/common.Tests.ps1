@@ -51,6 +51,54 @@ Describe "Validation Patterns" {
             "" | Should -Not -Match $EnvVarNamePattern
         }
     }
+
+    Context "FlavorNamePattern" {
+        # Use -CMatch (case-sensitive) throughout. [ValidatePattern] is
+        # case-sensitive by default at runtime, and the flavor convention is
+        # strictly lowercase — we want the test to fail if either changes.
+        It "accepts common flavor names" {
+            "base"     | Should -CMatch $FlavorNamePattern
+            "superset" | Should -CMatch $FlavorNamePattern
+            "py"       | Should -CMatch $FlavorNamePattern
+            "js"       | Should -CMatch $FlavorNamePattern
+            "net"      | Should -CMatch $FlavorNamePattern
+            "java"     | Should -CMatch $FlavorNamePattern
+        }
+
+        It "accepts hyphenated and digit-containing flavors" {
+            "unit-test" | Should -CMatch $FlavorNamePattern
+            "node-20"   | Should -CMatch $FlavorNamePattern
+            "e2e"       | Should -CMatch $FlavorNamePattern
+        }
+
+        It "accepts a single letter" {
+            "a" | Should -CMatch $FlavorNamePattern
+        }
+
+        It "rejects uppercase" {
+            "PY"   | Should -Not -CMatch $FlavorNamePattern
+            "Java" | Should -Not -CMatch $FlavorNamePattern
+        }
+
+        It "rejects names starting with a digit or hyphen" {
+            "1node" | Should -Not -CMatch $FlavorNamePattern
+            "-py"   | Should -Not -CMatch $FlavorNamePattern
+        }
+
+        It "rejects names ending with a hyphen" {
+            "py-"      | Should -Not -CMatch $FlavorNamePattern
+            "node-20-" | Should -Not -CMatch $FlavorNamePattern
+        }
+
+        It "rejects underscores and other punctuation" {
+            "unit_test" | Should -Not -CMatch $FlavorNamePattern
+            "py.env"    | Should -Not -CMatch $FlavorNamePattern
+        }
+
+        It "rejects empty string" {
+            "" | Should -Not -CMatch $FlavorNamePattern
+        }
+    }
 }
 
 Describe "Get-ProjectRoot" {
@@ -244,6 +292,106 @@ Describe "ConvertTo-ShellEscapedSingleQuoted" {
         It "escapes backslashes before quotes to avoid corruption" {
             # raw a\'b -> a\\\'b (each \ doubled, then ' becomes \')
             ConvertTo-ShellEscapedSingleQuoted -Value "a\'b" -Shell "fish" | Should -Be "a\\\'b"
+        }
+    }
+}
+
+Describe "Test-SecretTagsMatchFilter" {
+    BeforeAll {
+        function New-Tags {
+            param([string]$Resource, [string]$Flavor, [string]$EnvVarName)
+            $obj = [pscustomobject]@{}
+            if ($PSBoundParameters.ContainsKey('Resource')) {
+                $obj | Add-Member -NotePropertyName 'resource' -NotePropertyValue $Resource
+            }
+            if ($PSBoundParameters.ContainsKey('Flavor')) {
+                $obj | Add-Member -NotePropertyName 'flavor' -NotePropertyValue $Flavor
+            }
+            if ($PSBoundParameters.ContainsKey('EnvVarName')) {
+                $obj | Add-Member -NotePropertyName 'env-var-name' -NotePropertyValue $EnvVarName
+            }
+            return $obj
+        }
+    }
+
+    Context "no filters" {
+        It "matches a fully-tagged secret" {
+            $t = New-Tags -Resource "r" -Flavor "py"
+            Test-SecretTagsMatchFilter -Tags $t | Should -BeTrue
+        }
+
+        It "matches a secret with no tags at all" {
+            Test-SecretTagsMatchFilter -Tags $null | Should -BeTrue
+        }
+
+        It "matches an unflavored legacy secret" {
+            $t = New-Tags -Resource "r"
+            Test-SecretTagsMatchFilter -Tags $t | Should -BeTrue
+        }
+    }
+
+    Context "resource filter only" {
+        It "matches when secret resource is in the filter list" {
+            $t = New-Tags -Resource "myapp" -Flavor "py"
+            Test-SecretTagsMatchFilter -Tags $t -ResourceFilters @("myapp","other") | Should -BeTrue
+        }
+
+        It "rejects when secret resource is not in the filter list" {
+            $t = New-Tags -Resource "wrong" -Flavor "py"
+            Test-SecretTagsMatchFilter -Tags $t -ResourceFilters @("myapp") | Should -BeFalse
+        }
+
+        It "rejects a secret with no resource tag when resource filter is set" {
+            $t = New-Tags -Flavor "py"
+            Test-SecretTagsMatchFilter -Tags $t -ResourceFilters @("myapp") | Should -BeFalse
+        }
+
+        It "rejects a secret with empty resource tag" {
+            $t = New-Tags -Resource "" -Flavor "py"
+            Test-SecretTagsMatchFilter -Tags $t -ResourceFilters @("myapp") | Should -BeFalse
+        }
+
+        It "rejects null tags when resource filter is set" {
+            Test-SecretTagsMatchFilter -Tags $null -ResourceFilters @("myapp") | Should -BeFalse
+        }
+    }
+
+    Context "flavor filter only" {
+        It "matches when secret flavor is in the filter list" {
+            $t = New-Tags -Resource "r" -Flavor "py"
+            Test-SecretTagsMatchFilter -Tags $t -FlavorFilters @("py") | Should -BeTrue
+        }
+
+        It "matches with multi-flavor filter" {
+            $t = New-Tags -Resource "r" -Flavor "js"
+            Test-SecretTagsMatchFilter -Tags $t -FlavorFilters @("py","js","net") | Should -BeTrue
+        }
+
+        It "rejects when flavor differs" {
+            $t = New-Tags -Resource "r" -Flavor "java"
+            Test-SecretTagsMatchFilter -Tags $t -FlavorFilters @("py") | Should -BeFalse
+        }
+
+        It "rejects unflavored legacy secret when flavor filter set (no implicit match)" {
+            $t = New-Tags -Resource "r"
+            Test-SecretTagsMatchFilter -Tags $t -FlavorFilters @("py") | Should -BeFalse
+        }
+    }
+
+    Context "combined filters" {
+        It "requires both resource AND flavor to match" {
+            $t = New-Tags -Resource "myapp" -Flavor "py"
+            Test-SecretTagsMatchFilter -Tags $t -ResourceFilters @("myapp") -FlavorFilters @("py") | Should -BeTrue
+        }
+
+        It "rejects when resource matches but flavor does not" {
+            $t = New-Tags -Resource "myapp" -Flavor "js"
+            Test-SecretTagsMatchFilter -Tags $t -ResourceFilters @("myapp") -FlavorFilters @("py") | Should -BeFalse
+        }
+
+        It "rejects when flavor matches but resource does not" {
+            $t = New-Tags -Resource "other" -Flavor "py"
+            Test-SecretTagsMatchFilter -Tags $t -ResourceFilters @("myapp") -FlavorFilters @("py") | Should -BeFalse
         }
     }
 }
